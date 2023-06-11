@@ -41,6 +41,8 @@ nofuzz: 仅获取有效api，无后续响应获取
 
 ![Alt text](img/image.png)
 
+![Alt text](img/image1.png)
+
 fuzz模式 nobody
 
 `python3 jjjjjjjjjjjjjs.py  http://192.168.189.133:3000 fuzz nobody`
@@ -57,6 +59,8 @@ api模式 nofuzz
 
 ![Alt text](img/image5.png)
 ## 致敬
+
+师傅们太强了
 
 https://github.com/pingc0y/URLFinder
 
