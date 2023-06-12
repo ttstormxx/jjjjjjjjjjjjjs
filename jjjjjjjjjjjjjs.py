@@ -199,15 +199,41 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     threads=50
     anchorRespList=[]
     Results=fuzz.taskUsingThread(fuzz.universalGetRespWithTagUsingRequests,mode,origionUrl,urlListWithTag,anchorRespList,threads)
-    #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
-    for result in Results:
+    #排除404响应
+    Results=[x for x in Results if x["status"]["code"]!=404]
+    #标记所有初始响应
+    # 从每个字典中提取size键
+    sizes = [d['status']['size'] for d in Results]
+    # 使用Counter计数
+    size_counts = Counter(sizes)
+    # 找到计数最高的元素
+    most_common_size = size_counts.most_common(1)[0][0]
+    # print(f"最大相同值: {most_common_size}")
+    # 找到具有最多相同size键的元素
+    if most_common_size:
+        most_common_elements = sorted([d for d in Results if d['status']['size'] == most_common_size],key=lambda item:item["api"])
+        diffResults=sorted([d for d in Results if d['status']['size'] != most_common_size],key=lambda item:item["api"])
+        result=most_common_elements[0]
         if result["status"]["code"]!=404:
+            print(f"默认(初始)响应页面:")
             if result["status"]['locationtimes']==0:
-                print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
             else:
                 code=",".join([str(x) for x in result["status"]["locationcode"]])
                 location="-->".join(result["status"]["location"])
                 print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+    if diffResults:
+        print()
+        print(f"差异响应页面:")
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
+        for result in diffResults:
+            if result["status"]["code"]!=404:
+                if result["status"]['locationtimes']==0:
+                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                else:
+                    code=",".join([str(x) for x in result["status"]["locationcode"]])
+                    location="-->".join(result["status"]["location"])
+                    print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
 def somehowreplaceUrlfinder(url):
     """移除urlfinder调用
 
@@ -234,6 +260,19 @@ def somehowreplaceUrlfinder(url):
 
     return lst
 
+def apiToUrlRearrange(origionUrl,apiList):
+    cleanurl=getCleanUrl(origionUrl)
+    apiList=[{"url":api,"tag":"httpx","api":api} for api in apiList]
+    # urlListWithTag=[cleanurl+ele["url"] for ele in apiList]
+    urlListWithTag=[]
+    for ele in apiList:
+        ele["url"]=cleanurl+ele["url"]
+        urlListWithTag.append(ele)
+    if urlListWithTag:
+        return urlListWithTag
+    else:
+        return
+
 #废弃
 def getApiFromUrlList(origionUrl,urlList):
     """从输入的url列表中获取api接口列表
@@ -254,6 +293,10 @@ def getApiFromUrlList(origionUrl,urlList):
     for x in range(len(interfaceList)):
         if "http://" in interfaceList[x] or "https://" in interfaceList[x]:
             interfaceList[x]=urlparse(interfaceList[x]).path
+    mydicc={}
+    for x in interfaceList:
+        mydicc[x]=None
+    interfaceList=list(set(mydicc.keys()))
     if DEBUG and Verbose:
         print("接口为: ")
         for line in interfaceList:
@@ -303,16 +346,17 @@ def getParseJsFromUrl(origionUrl):
         print(f"初始url为: {origionUrl}")
         print()
     # urlList=getJsWithoutPaperWork(origionUrl)
-    urls=[]
-    urlList=[]
-    urls.append(origionUrl)
-    cleanurl=getCleanUrl(origionUrl)
-    if cleanurl!=origionUrl.strip("/"):
-        urls.append(cleanurl)
-    for url in urls:
-        # urlList+=getJsWithoutPaperWork(url)
-        # urlList+=getJsWithoutPaperWorkUsingJSFinder(url)
-        urlList+=somehowreplaceUrlfinder(url)
+    # urls=[]
+    # urlList=[]
+    urlList=somehowreplaceUrlfinder(origionUrl)
+    # urls.append(origionUrl)
+    # cleanurl=getCleanUrl(origionUrl)
+    # if cleanurl!=origionUrl.strip("/"):
+    #     urls.append(cleanurl)
+    # for url in urls:
+    #     # urlList+=getJsWithoutPaperWork(url)
+    #     # urlList+=getJsWithoutPaperWorkUsingJSFinder(url)
+    #     urlList+=somehowreplaceUrlfinder(url)
     #*爬取origionurl和cleanurl
     # if cleanurl!=origionUrl.strip("/"):
     #     # urlList+=getJsWithoutPaperWork(cleanurl)
@@ -415,7 +459,7 @@ def urlToFile(mode,origionUrl,filename):
     # if len(urlList)==0:
     #     sys.exit("爬取结果为空")
 
-    print(f"url爬取完毕，输出到 {rawFilename}, url总数: {len(urlList)}")
+    print(f"url爬取完毕，原始结果输出到 {rawFilename}, url总数: {len(urlList)}")
     writeLinesIntoFile(urlList,rawFilename)
 
     print()
@@ -427,35 +471,44 @@ def urlToFile(mode,origionUrl,filename):
     # writeLinesIntoFile(removeDangerousApi(urlList),filename=filename)
     writeLinesIntoFile(urlListRemovedDangerous,filename=filename)
     print()
-    #todo 优化httpx输出位置到底部
-    print()
-    print(f"输出爬取结果: {len(urlListRemovedDangerous)} 个")
+    # 优化httpx输出位置到底部
     #输出爬取结果
     # urlList=readFileIntoList(filename)
     # for line in urlList:
     #     print(line)
-    for line in urlListRemovedDangerous:
-        print(line)
+    # for line in urlListRemovedDangerous:
+    #     # print(line)
+    #     print(f"{line}         api: {urlparse(line).path}")
     #输出接口字典到文件
-    interfaceDicc="js.txt"
-    apiList=urlToInterface(origionUrl,urlListRemovedDangerous,interfaceDicc)
     print()
-    if apiList:
-        print(f"输出锚点#链接: {len(apiList)} 个")
+    interfaceDicc=".js.txt"
+    myspider=apiFuzz()
+    apiList=urlToInterface(origionUrl,urlListRemovedDangerous,interfaceDicc)
+    outputUrlList=myspider.fastUniqListWithTagDicc(apiToUrlRearrange(origionUrl,apiList))
+    print(f"输出爬取结果: {len(outputUrlList)} 个")
+    if outputUrlList:
+        outputUrlList=sorted(outputUrlList,key=lambda item: item["api"])
+        for line in outputUrlList:
+            print(f"{line['url']}         api: {line['api']}")
     else:
-        print(f"锚点#链接: 0 个")
+        print(f"处理结果为空")
+    # print()
+    # if apiList:
+    #     print(f"输出锚点#链接: {len(apiList)} 个")
+    # else:
+    #     print(f"锚点#链接: 0 个")
     # apiList=sorted(getApiFromUrlList(origionUrl,urlList))#全排序会干扰判断，这里不完全排序
-    getAnchor=apiFuzz()
-    apiList=sorted(getAnchor.fastUniqList(apiList))#全排序会干扰判断，这里不完全排序
-    anchorList=getAnchor.mergePathPure(anchorUserInterface,apiList)
-    for line in anchorList:
-        print(line)
+    # getAnchor=apiFuzz()
+    # apiList=sorted(getAnchor.fastUniqList(apiList))#全排序会干扰判断，这里不完全排序
+    # anchorList=getAnchor.mergePathPure(anchorUserInterface,apiList)
+    # for line in anchorList:
+    #     print(line)
     # print("httpx 验证开始")
     print()
     print("爬取结果验证开始")
     # requestWithHttpx(filename)
     somehowreplaceHttpx(mode,origionUrl,apiList)
-    print("爬取结果验证结束")
+    # print("爬取结果验证结束")
     # print("httpx 访问结束")
     return True
 
