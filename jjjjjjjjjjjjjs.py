@@ -334,12 +334,14 @@ def removeDangerousApi(urlList):
     filename=".js_dangerous.txt"
     if len(dangerUrlList)!=0:
         writeLinesIntoFile(dangerUrlList,filename)
-        print(f"危险接口总数: {len(dangerUrlList)} 个,已输出到 {filename} ,如下：")
-        if len(dangerUrlList)!=0:
-            print("随机展示危险接口")
-            for i in range(len(dangerUrlList)):
-                if i%10==0:
-                    print(dangerUrlList[i])
+        # print(f"危险接口总数: {len(dangerUrlList)} 个,已输出到 {filename} ,如下：")
+        print(f"危险接口总数: {len(dangerUrlList)} 个,已输出到 {filename}")
+        if DEBUG:
+            if dangerUrlList:
+                print("随机展示危险接口")
+                for i in range(len(dangerUrlList)):
+                    if i%10==0:
+                        print(dangerUrlList[i])
     else:
         print(f"未发现危险接口")
     return cleanUrlList
@@ -555,9 +557,11 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
     anchorRespList=myFuzz.getAnchorResponse(mode,origionUrl)
     # 取消手动输入api情况下的对比 不取消
     #todo 或者留下锚点，但是依然输出
-    print("")
     singlestatus=userInputApi(mode,origionUrl,apiPaths,apiList,anchorRespList)
     configdomainurlroot=[]#单次结束置空
+    print()
+    myFuzz.standardTaskStatusOutput(mode,singlestatus)
+    print()
     if DEBUG:
         print(f"单输入:发包次数: {len(countspider)} 次")
     return singlestatus
@@ -1602,12 +1606,12 @@ class apiFuzz:
             print(f"输入模式:指纹识别到有效api:")
             for finger in suspiciousApi:
                 print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
-                print()
+                # print()
             #[{"url":url,"tag":"fingerprint","api":api}]
             return suspiciousApi
         if not suspiciousApi:
             print("输入模式:指纹识别结束，未发现有效api")
-            print()
+            # print()
             # if "nofuzz" not in mode:
             #     print("指纹识别结束，未发现有效api")
             # else:
@@ -1824,6 +1828,7 @@ class apiFuzz:
         Args:
             apiList (_type_): _description_
         """
+        print()
         cleanUrl=getCleanUrl(origionUrl)
         if mode.replace("batch","").startswith("fuzz"):#fuzz模式
             inputApis=self.uniqRootImplement2(inputApis)
@@ -1833,18 +1838,14 @@ class apiFuzz:
         mergeApisListWithTag=self.fastUniqDicList([{"url":url,"tag":"mergeApis","api":url} for url in mergeApis])
         fuzzingList=mergeApisListWithTag
         #去重
-        if DEBUG:
-            if "nofuzz" in mode:
-                print(f"nofuzz:api总量: {len(fuzzingList)}")
-            else:
-                print(f"二次验证:api总量: {len(fuzzingList)}")
         fuzzingList=self.fastUniqListWithTagDicc(fuzzingList)
 
         # print(f"过滤去重:api总量: {len(fuzzingList)}")
-        if "nofuzz" in mode:
-            print(f"nofuzz:待测试:api总量: {len(fuzzingList)}")
-        else:
-            print(f"二次验证:待测试:api总量: {len(fuzzingList)}")
+        if DEBUG:
+            if "nofuzz" in mode:
+                print(f"nofuzz:待测试:api总量: {len(fuzzingList)}")
+            else:
+                print(f"二次验证:待测试:api总量: {len(fuzzingList)}")
         #排除指定api
         if len(noneApiPaths)!=0:
             if DEBUG:
@@ -1867,7 +1868,7 @@ class apiFuzz:
         #! 未处理多次fuzz未获得有效api的情况，会发送超大量数据包
         while start < len(fuzzingUrlList):
             sublist = fuzzingUrlList[start:end]
-            print()
+            # print()
             if "nofuzz" in mode:
                 print(f"nofuzz:第 {count+1} 批次fuzz: 数量: {len(sublist)} 个")
             else:
@@ -1892,17 +1893,14 @@ class apiFuzz:
                         # if "application/json" in res["status"]["type"]:
                         if "json" in res["status"]["type"]:#启用contentType库
                             apiSpottedList.append(res)
-            if len(apiSpottedList)!=0:#从这一批fuzz结果中发现
-                print()
+            if apiSpottedList:#从这一批fuzz结果中发现
                 apis=[]#url列表
                 for api in apiSpottedList:#{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag}
                     if api["api"] not in apis:#从响应中获取独立api，从独立api定位tags，从tag定位url进行fuzz
                         apis.append(api["api"])
-                print()
                 validApis=self.uniqRootImplement2(apis)#有效api
                 suspiciousApis=[]#疑似api
                 if validApis:
-                    print()
                     uniques = [item for item, count in Counter(apis).items() if count == 1]
                     uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
                     if uniqPaths:
@@ -1920,18 +1918,20 @@ class apiFuzz:
                 # else:
                 #     inputApis=[]
                 #     apiResult={"inputApis":inputApis,"validApis":validApis,"suspiciousAPis":suspiciousApis}
-                if apiResult["validApis"]:
-                    if not mode.replace("batch","").startswith("fuzz"):
-                        print(f"输入api: {apiResult['inputApis']}")
+                if DEBUG:
+                    if apiResult["validApis"]:
+                        print()
+                        if not mode.replace("batch","").startswith("fuzz"):
+                            print(f"输入api: {apiResult['inputApis']}")
+                        else:
+                            print(f"输入api: fuzz模式无输入api")
+                        print(f"识别api: {apiResult['validApis']}")
+                        print(f"疑似api: {apiResult['suspiciousAPis']}")
                     else:
-                        print(f"输入api: fuzz模式无输入api")
-                    print(f"识别api: {apiResult['validApis']}")
-                    print(f"疑似api: {apiResult['suspiciousAPis']}")
-                else:
-                    if "nofuzz" in mode:
-                        print("nofuzz: 未识别到有效api")
-                    else:
-                        print("二次验证: 未识别到有效api")
+                        if "nofuzz" in mode:
+                            print("nofuzz: 未识别到有效api")
+                        else:
+                            print("二次验证: 未识别到有效api")
                 return apiResult
                 # break#*不继续进行fuzz，此处未考虑多个根api情况
                 #todo 排除已发现有效api进行二次测试，确定是否存在多个根api未被发现
@@ -1939,12 +1939,12 @@ class apiFuzz:
                 start = end
                 end += step
                 count+=1
-        if len(apiSpottedList)==0:
+        if not apiSpottedList:
             if "nofuzz" in mode:
                 print(f"nofuzz: fuzz结束，未发现有效api")
             else:
                 print(f"二次验证: fuzz结束，未发现有效api")
-            return
+        return
     #二次锚点
     def getApiWithoutTokenAnchor(self,fuzzRespList):
         """获取正确api后 第二次锚点 用于去除需要认证的api
@@ -2007,6 +2007,7 @@ class apiFuzz:
         myFuzz=apiFuzz()
         singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
         configdomainurlroot=[]#单次结束置空
+        self.standardTaskStatusOutput(mode,singlestatus)
         if DEBUG:
             print(f"单fuzz:发包次数: {len(countspider)} 次")
         return singlestatus
@@ -2027,6 +2028,65 @@ class apiFuzz:
         # #*[{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"validApis":validApis,"suspiciousApis":suspiciousApis},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}]}]
         if DEBUG:
             print(f"批fuzz:发包次数: {len(countspider)} 次")
+    #单任务状态输出
+    def standardTaskStatusOutput(self,mode,singlestatus):
+        #输出单任务状态
+        #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default","dead":"alive"}
+        print()
+        # print()
+        print(f"单任务结果:")
+        status=singlestatus
+        print(f"目标: {status['target']}")
+        if status["dead"]=="alive":
+            if not "nofuzz" in mode:
+                if status["juicyApiList"]:
+                        print()
+                        print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
+                        for info in status["juicyApiList"]:
+                            print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                #敏感文件发现
+                #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
+                # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
+                if status["sensitiveFileList"]:
+                    print()
+                    print(f"发现疑似敏感文件如下:")
+                    for info in status["sensitiveFileList"]:
+                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                else:
+                    if DEBUG:
+                        print()
+                        print(f"未发现敏感文件")
+                #敏感信息输出
+                if status["sensitivInfoList"]:
+                    print()
+                    print("敏感信息发现如下:")
+                    for info in status["sensitivInfoList"]:
+                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                else:
+                    if DEBUG:
+                        print()
+                        print("未发现敏感信息")
+            #接口输出
+            print()
+            print("接口识别结果")
+            if status["apiFigureout"]["validApis"]:
+                    if not mode.replace("batch","").startswith("fuzz"):
+                        print(f"输入api: {status['apiFigureout']['inputApis']}")
+                    else:
+                        print(f"输入api: fuzz模式无输入api")
+                    print(f"识别api: {status['apiFigureout']['validApis']}")
+                    print(f"疑似api: {status['apiFigureout']['suspiciousAPis']}")
+            else:
+                print("未识别到有效api")
+            print()
+            if status["fingerprint"]:
+                for finger in status["fingerprint"]:
+                        print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+            # print()
+            print()
+        else:
+            print(f"未发现有效api")
+            print()
     #批处理任务状态输出
     def batchTaskStatusOutput(self,mode,batchTaskStatus):
         #输出批任务状态
@@ -2100,24 +2160,34 @@ class apiFuzz:
         #[{"url":url,"tag":"completeApi","api":api}]
         #*返回#{"target":origionUrl,"juicyApiList":[],"sensitivInfoList":[],"sensitiveFileList":[],"apiFigureout":{"inputApis":[],"validApis":[],"suspiciousAPis":[]},"fingerprint":[],"tag":"default","dead":"alive"}
         singlestatus={"target":origionUrl,"juicyApiList":[],"sensitivInfoList":[],"sensitiveFileList":[],"apiFigureout":{"inputApis":[],"validApis":[],"suspiciousAPis":[]},"fingerprint":[],"tag":"default","dead":"alive"}
-        # if configdomainurlroot:#爬取根识别
-        #     configroot=configdomainurlroot[0]
-        #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-        #     pulses=self.feelPulse(mode,origionUrl,[configroot],noneApis)
-        #     if DEBUG:
-        #         if pulses:
-        #             print(f"配置根识别成功: {configroot}")
-        #         else:
-        #             print(f"配置根未识别成功,进行常规指纹识别")
-        #     if not pulses:
-        #         pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
-        # else:
-        #     pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
         pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
         # pulses=None
         if pulses:
             # anchorRespList=[]
             anchorRespList=self.getAnchorResponse(mode,origionUrl,10)
+            apidiccs={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
+            for pulse in pulses:
+                #{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
+                apidicc=self.isApiValid(mode,origionUrl,[pulse['api']],apiFuzzList,[],noneApis,anchorRespList)
+                if apidicc:
+                    apidiccs["inputApis"]+=apidicc["inputApis"]
+                    apidiccs["validApis"]+=apidicc["validApis"]
+                    apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
+            #nofuzz 状态输出实现
+            #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
+            singlestatus["tag"]="nofuzz"
+            singlestatus["target"]=origionUrl
+            singlestatus["apiFigureout"]=apidiccs
+            singlestatus["fingerprint"]=pulses
+            #输出命中指纹信息
+            # if DEBUG:
+            #     print()
+            #     for pulse in pulses:
+            #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+            # else:
+            #     print()
+            #     for pulse in pulses:
+            #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
             if "nofuzz" not in mode:#nofuzz实现
                 #组合有效api
                 validApis=[x["api"] for x in pulses]
@@ -2127,38 +2197,38 @@ class apiFuzz:
                 singlestatus=self.apiFuzzForUserInputApiInAction(mode,origionUrl,validApis,apiFuzzList,anchorRespList)
                 singlestatus["fingerprint"]=pulses
                 #输出命中指纹信息
-                if DEBUG:
-                    print()
-                    for pulse in pulses:
-                        print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
-                else:
-                    print()
-                    for pulse in pulses:
-                        print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
-            else:
-                apidiccs={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
-                for pulse in pulses:
-                    #{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
-                    apidicc=self.isApiValid(mode,origionUrl,[pulse['api']],apiFuzzList,[],noneApis,anchorRespList)
-                    if apidicc:
-                        apidiccs["inputApis"]+=apidicc["inputApis"]
-                        apidiccs["validApis"]+=apidicc["validApis"]
-                        apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
-                #nofuzz 状态输出实现
-                #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
-                singlestatus["tag"]="nofuzz"
-                singlestatus["target"]=origionUrl
-                singlestatus["apiFigureout"]=apidiccs
-                singlestatus["fingerprint"]=pulses
-                #输出命中指纹信息
-                if DEBUG:
-                    print()
-                    for pulse in pulses:
-                        print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
-                else:
-                    print()
-                    for pulse in pulses:
-                        print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+                # if DEBUG:
+                #     print()
+                #     for pulse in pulses:
+                #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+                # else:
+                #     print()
+                #     for pulse in pulses:
+                #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+            # else:
+                # apidiccs={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
+                # for pulse in pulses:
+                #     #{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
+                #     apidicc=self.isApiValid(mode,origionUrl,[pulse['api']],apiFuzzList,[],noneApis,anchorRespList)
+                #     if apidicc:
+                #         apidiccs["inputApis"]+=apidicc["inputApis"]
+                #         apidiccs["validApis"]+=apidicc["validApis"]
+                #         apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
+                # #nofuzz 状态输出实现
+                # #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
+                # singlestatus["tag"]="nofuzz"
+                # singlestatus["target"]=origionUrl
+                # singlestatus["apiFigureout"]=apidiccs
+                # singlestatus["fingerprint"]=pulses
+                # #输出命中指纹信息
+                # if DEBUG:
+                #     print()
+                #     for pulse in pulses:
+                #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+                # else:
+                #     print()
+                #     for pulse in pulses:
+                #         print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
         else:
             print(f"指纹未识别到有效api，进行fuzz")
             anchorRespList=self.getAnchorResponse(mode,origionUrl)
@@ -2193,25 +2263,30 @@ class apiFuzz:
             #! 对用户输入进行指纹识别或二次验证，但用户输入会覆盖指纹识别和二次验证结果
             if not mode.replace("batch","").startswith("fuzz"):#兼容fuzz模式指纹识别成功
                 pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-                #适配配置根识别模式
-                # if configdomainurlroot:#爬取根识别
-                #     configroot=configdomainurlroot[0]
-                #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-                #     pulses=self.feelPulse(mode,origionUrl,[configroot])
-                #     if DEBUG:
-                #         if pulses:
-                #             print(f"配置根识别成功: {configroot}")
-                #         else:
-                #             print(f"配置根未识别成功,进行常规指纹识别")
-                #     if not pulses:
-                #         pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-                # else:
-                #     pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-
-                # pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
                 if pulses:#指纹识别
                     tmpinputapipaths+=[x["api"] for x in pulses]
                     # tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
+                    #*[{"url":url,"tag":"fingerprint","api":api}]
+                    apidiccs={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
+                    for pulse in pulses:
+                        #{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
+                        apidicc=self.isApiValid(mode,origionUrl,[pulse['api']],apiFuzzList,apiPaths)
+                        if apidicc:
+                            apidiccs["inputApis"]+=apidicc["inputApis"]
+                            apidiccs["validApis"]+=apidicc["validApis"]
+                            apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
+                    #nofuzz 状态输出实现
+                    #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
+                    singlestatus["tag"]="nofuzz"
+                    singlestatus["target"]=origionUrl
+                    singlestatus["apiFigureout"]=apidiccs
+                    singlestatus["fingerprint"]=pulses
+                    #*兼容api模式，修改inputApis为输入的api
+                    singlestatus["apiFigureout"]["inputApis"]=tmpinputapipaths
+                    #输出命中指纹信息
+                    # print()
+                    # for pulse in pulses:
+                    #     print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
 
                 #* 用户输入有可能是一个大概的范围，不是准确api，因此实施二次验证
                 else:#二次验证
@@ -2221,6 +2296,11 @@ class apiFuzz:
                     if valid:
                         tmpinputapipaths+=valid["validApis"]+valid["suspiciousAPis"]
                         # tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
+                        singlestatus["tag"]="nofuzz"
+                        singlestatus["target"]=origionUrl
+                        singlestatus["apiFigureout"]=valid
+                    else:
+                        singlestatus["dead"]="dead"
             cleanurl=getCleanUrl(origionUrl)
             for i in range(len(tmpinputapipaths)):
                 if not isUrlValid(tmpinputapipaths[i]):
@@ -2238,10 +2318,6 @@ class apiFuzz:
             urlFuzzList=list(mydicc.keys())
             if DEBUG:
                 print(f"指定api待处理数量: {len(urlFuzzList)}")
-                for x in urlFuzzList:
-                    if "jeecg-boothttp:" in x:
-                        print(f"----<x>----{x}")
-
             filename=".js_fuzz_url.txt"
             writeLinesIntoFile(urlFuzzList,filename)
             #httpx有bug，不会请求完 可能行数太多？7w+行，只请求了前1k+左右的数量就停止
@@ -2250,8 +2326,6 @@ class apiFuzz:
                 print(f"fuzz目标总数: {len(urlFuzzList)}")
             #todo 测试中 大量的访问会导致后续访问全部timeout
             singlestatus=self.taskUsingThread(self.getFuzzUrlResultUsingRequests,mode,origionUrl,urlFuzzList,anchorRespList,threads)
-            # singlestatus["apiFigureout"]["inputApis"]=[x.replace(cleanurl,"") for x in apiPaths]
-            # return singlestatus
             try:
                 if valid:
                     singlestatus["apiFigureout"]=valid
@@ -2260,31 +2334,15 @@ class apiFuzz:
             try:
                 if pulses:
                     singlestatus["fingerprint"]=pulses
-                    print()
-                    for pulse in pulses:
-                        print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+                    # print()
+                    # for pulse in pulses:
+                    #     print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
             except:
                 pass
         else:
             noneApiPaths=[]
             pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-            #适配配置根识别模式
-            # if configdomainurlroot:#爬取根识别
-            #     configroot=configdomainurlroot[0]
-            #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-            #     pulses=self.feelPulse(mode,origionUrl,[configroot])
-            #     if DEBUG:
-            #         if pulses:
-            #             print(f"配置根识别成功: {configroot}")
-            #         else:
-            #             print(f"配置根未识别成功,进行常规指纹识别")
-            #     if not pulses:
-            #         pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-            # else:
-            #     pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-            
             #*[{"url":url,"tag":"fingerprint","api":api}]
-            # pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
             if pulses:
                 apidiccs={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
                 for pulse in pulses:
@@ -2303,9 +2361,9 @@ class apiFuzz:
                 #*兼容api模式，修改inputApis为输入的api
                 singlestatus["apiFigureout"]["inputApis"]=tmpinputapipaths
                 #输出命中指纹信息
-                print()
-                for pulse in pulses:
-                    print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
+                # print()
+                # for pulse in pulses:
+                #     print(f"命中api: {pulse['api']} 命中指纹: {pulse['tag']} 命中url: {pulse['url']}")
             else:
                 #*返回{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
                 apidicc=self.isApiValid(mode,origionUrl,tmpinputapipaths,apiFuzzList,apiPaths,noneApiPaths,anchorRespList)
@@ -2317,15 +2375,6 @@ class apiFuzz:
                     singlestatus["apiFigureout"]=apidicc
                 else:
                     singlestatus["dead"]="dead"
-                    # print(f"{mode}: 未发现有效api")
-            # print(f"debuuuuuuuuging-------------->: {singlestatus['apiFigureout']}")
-            # return singlestatus
-            # if apidicc:
-            #     print(f"输入api: {apidicc['inputApis']}")
-            #     print(f"识别api: {apidicc['validApis']}")
-            #     print(f"疑似api: {apidicc['suspiciousAPis']}")
-            # else:
-            #     print("nofuzz: 未识别到有效api")
         return singlestatus
     #多线程任务发布
     def taskUsingThread(self,Method,mode,origionUrl,apiFuzzList,anchorRespList=[],threads=10,taskStatusCount=[]):
@@ -2384,39 +2433,39 @@ class apiFuzz:
                 #返回 [{"url": "url", "api": "api", "tag": "xlsx", "desc": "xlsx","code":"code","size":"size","count": 1}]
                 sensitiveFileList=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
                 #敏感接口输出
-                if juicyApiList:
-                    print()
-                    print(f"发现敏感接口如下(不包含危险接口): {len(juicyApiList)} 个")
-                    for info in juicyApiList:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
-                else:
-                    # if DEBUG:
-                    print()
-                    print("未发现敏感接口")
-                #敏感文件发现
-                #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
-                # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
-                if sensitiveFileList:
-                    print()
-                    print(f"发现疑似敏感文件如下:")
-                    for info in sensitiveFileList:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
-                else:
-                    # if DEBUG:
-                    print()
-                    print(f"未发现敏感文件")
-                #敏感信息输出
-                #todo 转移到apiFuzzInAction中输出
-                #返回 [{"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size", "count": 1}]
-                if sensitivInfoList:
-                    print()
-                    print("敏感信息发现如下:")
-                    for info in sensitivInfoList:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
-                else:
-                    # if DEBUG:
-                    print()
-                    print("未发现敏感信息")
+                # if juicyApiList:
+                #     print()
+                #     print(f"发现敏感接口如下(不包含危险接口): {len(juicyApiList)} 个")
+                #     for info in juicyApiList:
+                #         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # else:
+                #     # if DEBUG:
+                #     print()
+                #     print("未发现敏感接口")
+                # #敏感文件发现
+                # #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
+                # # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
+                # if sensitiveFileList:
+                #     print()
+                #     print(f"发现疑似敏感文件如下:")
+                #     for info in sensitiveFileList:
+                #         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # else:
+                #     # if DEBUG:
+                #     print()
+                #     print(f"未发现敏感文件")
+                # #敏感信息输出
+                # #todo 转移到apiFuzzInAction中输出
+                # #返回 [{"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size", "count": 1}]
+                # if sensitivInfoList:
+                #     print()
+                #     print("敏感信息发现如下:")
+                #     for info in sensitivInfoList:
+                #         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # else:
+                #     # if DEBUG:
+                #     print()
+                #     print("未发现敏感信息")
                 #有效api输出
                 cleanurl=getCleanUrl(origionUrl)
                 statusCount['rightCount']=[x.replace(cleanurl,"") for x in statusCount['rightCount']]
@@ -2424,23 +2473,23 @@ class apiFuzz:
                 validApis=self.uniqRootImplement2(validApis)#有效api
                 suspiciousApis=[]#疑似api
                 if validApis:
-                    print()
-                    print("有效api:")
-                    for api in validApis:
-                        print(api)
+                    # print()
+                    # print("有效api:")
+                    # for api in validApis:
+                    #     print(api)
                     uniques = [item for item, count in Counter(statusCount['rightCount']).items() if count == 1]
                     uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
                     if uniqPaths:
-                        print("疑似api:")
+                        # print("疑似api:")
                         suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
                         for api in suspiciousApis:
                             if api in uniqPaths:
                                 suspiciousApis.pop(suspiciousApis.index(api))
-                        for api in suspiciousApis:
-                            print(api)
-                else:
-                    print()
-                    print(f"未发现有效api")
+                        # for api in suspiciousApis:
+                        #     print(api)
+                # else:
+                #     print()
+                #     print(f"未发现有效api")
                 #任务结果统计
                 #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default"}
                 #! 键值大小写让我掉泪
