@@ -1103,7 +1103,8 @@ class apiFuzz:
                 if i != j and i.strip("/")!="" and j.strip("/")!="":
                     foot=self.footSize(i.strip("/"),j.strip("/"),delimiter)
                     if foot and foot not in common_prefixes:
-                        common_prefixes.append(foot)
+                        # common_prefixes.append(foot)
+                        common_prefixes.append(delimiter+foot)
         common_prefixes.sort(key=len)
         return common_prefixes
 
@@ -1548,6 +1549,92 @@ class apiFuzz:
             respstatus (_type_): _description_
         """
         pass
+
+    #用户输入识别
+    def feelUserInputApiPulse(self,mode,origionUrl,inputApis):
+        apiList=inputApis.copy()
+        apiList=["/"+x.strip("/") for x in apiList]
+        cleanurl=getCleanUrl(origionUrl)
+        apiList=[x for x in apiList if not any(x.strip("/").startswith(y) for y in apiRootBlackList)]
+        #合并常见api根
+        commonprefixs=self.findLongestCommonPrefix(apiList)#挂件
+        if DEBUG and Verbose:
+            print(f"公共前缀: {len(commonprefixs)} 个")
+            for i in commonprefixs:
+                print(i)
+        stairstiches=self.stairsSplitAndStitch(apiList)
+        if DEBUG and Verbose:
+            print(f"阶梯切割: {len(stairstiches)} 个")
+            for i in stairstiches:
+                print(i)
+        fullApilist=self.fastUniqList(apiList+commonprefixs+stairstiches)
+        #打tag
+        directApiListWithTag=self.fastUniqDicList([{"url":url,"tag":"directapi","api":url} for url in fullApilist])
+        print(f"输入指纹识别: 总请求量: {len(directApiListWithTag)} 个")
+        if DEBUG and Verbose:
+            for line in directApiListWithTag:
+                print(f"{line}")
+        #生成url
+        for i in range(len(directApiListWithTag)):#[{"url":url,"tag":"completeApi","api":api}]
+            directApiListWithTag[i]["url"]=cleanurl+directApiListWithTag[i]["url"]
+        #排序 按照api长度
+        directApiListWithTag=sorted(directApiListWithTag, key=lambda item: len(item["api"]))
+        respList=[]
+        threads=10
+        #请求
+        self.taskUsingThread(self.getRespWithTagUsingRequestsWithHeaders,mode,origionUrl,directApiListWithTag,respList,threads)
+        #ele {"url":url,"tag":"completeApi","api":api}
+        #[res的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}]
+        if DEBUG:
+            print(f"response count: {len(respList)}")
+        suspiciousApi=[]
+        for resp in respList:
+            for fingerprint in apiFingerprintWithTag:
+                if fingerprint["fingerprint"].lower() in resp["resp"].text[:1000].lower():#tag转换为指纹的tag
+                    suspiciousApi.append({"url":resp["url"],"tag":fingerprint["tag"],"api":resp["api"]})
+                    break
+        suspiciousApi=self.fastUniqListWithTagDicc(suspiciousApi)
+        tmp=[x["api"] for x in suspiciousApi]
+        uniqrootapi=self.uniqRootImplement2(tmp)
+        suspiciousApi=[x for x in suspiciousApi if x["api"] in uniqrootapi]
+        if suspiciousApi:
+            print()
+            print(f"输入模式:指纹识别到有效api:")
+            for finger in suspiciousApi:
+                print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+                print()
+            #[{"url":url,"tag":"fingerprint","api":api}]
+            return suspiciousApi
+        if not suspiciousApi:
+            print("输入模式:指纹识别结束，未发现有效api")
+            print()
+            # if "nofuzz" not in mode:
+            #     print("指纹识别结束，未发现有效api")
+            # else:
+            #     print("nofuzz模式:指纹识别结束，未发现有效api")
+        return
+    #配置根识别
+    def feelRootPulse(self,mode,origionUrl,rootConfigApi):
+        configRootUrl=getCleanUrl(origionUrl)+rootConfigApi
+        suspiciousApi=[]
+        #ele {"url":url,"tag":"default","api":api}
+        #列表形式
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
+        ele={"url":configRootUrl,"tag":"rootConfigApi","api":rootConfigApi}
+        resp=self.universalGetRespWithTagNopbarNolst(ele)
+        for fingerprint in apiFingerprintWithTag:
+            if fingerprint["fingerprint"].lower() in resp["resp"].text[:1000].lower():#tag转换为指纹的tag
+                suspiciousApi.append({"url":resp["url"],"tag":fingerprint["tag"],"api":resp["api"]})
+                break
+        if suspiciousApi:
+            print(f"配置根识别到有效Api:")
+            for finger in suspiciousApi:
+                print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+            #[{"url":url,"tag":"fingerprint","api":api}]
+            return suspiciousApi
+        else:
+            print(f"配置根未识别到有效Api")
+        return
     #指纹识别
     def feelPulse(self,mode,origionUrl,apiList,excludedApis=[]):
         """把脉 cool 返回有效api或none
@@ -1556,6 +1643,20 @@ class apiFuzz:
         Args:
             result (_type_): _description_
         """
+        #输入模式优先识别
+        if mode.replace("batch","").startswith("api"):
+            inputfinger=self.feelUserInputApiPulse(mode,origionUrl,apiList)
+            if inputfinger:
+                return inputfinger
+            else:
+                print(f"输入api未识别到有效api")
+                print()
+        #优先网站配置根识别
+        if configdomainurlroot:
+            rootApi=configdomainurlroot[0]
+            rootfinger=self.feelRootPulse(mode,origionUrl,rootApi)
+            if rootfinger:
+                return rootfinger
         #todo 用户输入模式 实施指纹识别之后，要修正这里的逻辑，增加输入api模式
         cleanurl=getCleanUrl(origionUrl)
         #去除api根黑名单
@@ -1999,19 +2100,20 @@ class apiFuzz:
         #[{"url":url,"tag":"completeApi","api":api}]
         #*返回#{"target":origionUrl,"juicyApiList":[],"sensitivInfoList":[],"sensitiveFileList":[],"apiFigureout":{"inputApis":[],"validApis":[],"suspiciousAPis":[]},"fingerprint":[],"tag":"default","dead":"alive"}
         singlestatus={"target":origionUrl,"juicyApiList":[],"sensitivInfoList":[],"sensitiveFileList":[],"apiFigureout":{"inputApis":[],"validApis":[],"suspiciousAPis":[]},"fingerprint":[],"tag":"default","dead":"alive"}
-        if configdomainurlroot:#爬取根识别
-            configroot=configdomainurlroot[0]
-            print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-            pulses=self.feelPulse(mode,origionUrl,[configroot],noneApis)
-            if DEBUG:
-                if pulses:
-                    print(f"配置根识别成功: {configroot}")
-                else:
-                    print(f"配置根未识别成功,进行常规指纹识别")
-            if not pulses:
-                pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
-        else:
-            pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
+        # if configdomainurlroot:#爬取根识别
+        #     configroot=configdomainurlroot[0]
+        #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
+        #     pulses=self.feelPulse(mode,origionUrl,[configroot],noneApis)
+        #     if DEBUG:
+        #         if pulses:
+        #             print(f"配置根识别成功: {configroot}")
+        #         else:
+        #             print(f"配置根未识别成功,进行常规指纹识别")
+        #     if not pulses:
+        #         pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
+        # else:
+        #     pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
+        pulses=self.feelPulse(mode,origionUrl,apiFuzzList,noneApis)
         # pulses=None
         if pulses:
             # anchorRespList=[]
@@ -2090,25 +2192,26 @@ class apiFuzz:
             # 这里没有考虑用户输入为url形式的api
             #! 对用户输入进行指纹识别或二次验证，但用户输入会覆盖指纹识别和二次验证结果
             if not mode.replace("batch","").startswith("fuzz"):#兼容fuzz模式指纹识别成功
+                pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
                 #适配配置根识别模式
-                if configdomainurlroot:#爬取根识别
-                    configroot=configdomainurlroot[0]
-                    print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-                    pulses=self.feelPulse(mode,origionUrl,[configroot])
-                    if DEBUG:
-                        if pulses:
-                            print(f"配置根识别成功: {configroot}")
-                        else:
-                            print(f"配置根未识别成功,进行常规指纹识别")
-                    if not pulses:
-                        pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-                else:
-                    pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
+                # if configdomainurlroot:#爬取根识别
+                #     configroot=configdomainurlroot[0]
+                #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
+                #     pulses=self.feelPulse(mode,origionUrl,[configroot])
+                #     if DEBUG:
+                #         if pulses:
+                #             print(f"配置根识别成功: {configroot}")
+                #         else:
+                #             print(f"配置根未识别成功,进行常规指纹识别")
+                #     if not pulses:
+                #         pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
+                # else:
+                #     pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
 
                 # pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
                 if pulses:#指纹识别
                     tmpinputapipaths+=[x["api"] for x in pulses]
-                    tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
+                    # tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
 
                 #* 用户输入有可能是一个大概的范围，不是准确api，因此实施二次验证
                 else:#二次验证
@@ -2117,11 +2220,12 @@ class apiFuzz:
                     valid=self.isApiValid(mode,origionUrl,tmpinputapipaths,apiFuzzList,apiPaths)
                     if valid:
                         tmpinputapipaths+=valid["validApis"]+valid["suspiciousAPis"]
-                        tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
+                        # tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
             cleanurl=getCleanUrl(origionUrl)
             for i in range(len(tmpinputapipaths)):
                 if not isUrlValid(tmpinputapipaths[i]):
                     tmpinputapipaths[i]=cleanurl+"/"+tmpinputapipaths[i].strip("/")
+            tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
             if DEBUG:
                 print(f"待处理api {len(tmpinputapipaths)} 个:")
                 for i in tmpinputapipaths:
@@ -2163,21 +2267,21 @@ class apiFuzz:
                 pass
         else:
             noneApiPaths=[]
-            
+            pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
             #适配配置根识别模式
-            if configdomainurlroot:#爬取根识别
-                configroot=configdomainurlroot[0]
-                print(f"识别到网站配置根: {configroot}, 进行指纹识别")
-                pulses=self.feelPulse(mode,origionUrl,[configroot])
-                if DEBUG:
-                    if pulses:
-                        print(f"配置根识别成功: {configroot}")
-                    else:
-                        print(f"配置根未识别成功,进行常规指纹识别")
-                if not pulses:
-                    pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
-            else:
-                pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
+            # if configdomainurlroot:#爬取根识别
+            #     configroot=configdomainurlroot[0]
+            #     print(f"识别到网站配置根: {configroot}, 进行指纹识别")
+            #     pulses=self.feelPulse(mode,origionUrl,[configroot])
+            #     if DEBUG:
+            #         if pulses:
+            #             print(f"配置根识别成功: {configroot}")
+            #         else:
+            #             print(f"配置根未识别成功,进行常规指纹识别")
+            #     if not pulses:
+            #         pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
+            # else:
+            #     pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
             
             #*[{"url":url,"tag":"fingerprint","api":api}]
             # pulses=self.feelPulse(mode,origionUrl,tmpinputapipaths)
@@ -2852,11 +2956,100 @@ class apiFuzz:
         finally:
             # 更新进度条
             pbar.update(1)
-            singlestatus={}
-            if singlestatus:
-                return singlestatus
+            # singlestatus={}
+        if singlestatus:
+            return singlestatus
+        return
+    #通用请求实现
+    def universalGetRespWithTagNopbarNolst(self,ele,statusCount={},headers={},redirect=True):
+        """#*专用于响应获取
+        #* 不会过滤响应，所有相应都会输出
+        ele {"url":url,"tag":"default","api":api}
+        列表形式
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
+        """
+        if not statusCount:
+            statusCount={"rightCount":[],"outputBodyCount":[],"timeoutCount":[],"connectErrorCount":[],"connectResetCount":[],"blockCount":[]}
+        countspider.append(1)#统计发包次数
+        if not headers:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
+                "Accept-Charset": "utf-8",
+                "Accept": "",#覆盖requests默认Accept值，'Accept': '*/*' 否则会导致全部200响应
+            }
+        try:#ele {"url":url,"tag":"default","api":api}
+            if redirect:#重定向默认
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             else:
-                return
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False, verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            try:
+                code=resp.status_code
+            except:
+                code=0
+            try:
+                content_size = len(resp.content)
+            except:
+                content_size = 0
+            try:#防止返回body为空或者没有title关键字，例如springboot404
+                page_title = resp.text.split('<title>')[1].split('</title>')[0]
+            except:
+                page_title=""
+            try:
+                contentType=resp.headers['content-type']
+                for type in contentTypeList:
+                    if type["key"] in contentType:
+                        contentType=type["tag"]
+            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+                contentType=""
+            #location
+            #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            if resp.history:#重定向实施
+                for res in resp.history:
+                    respStatus["locationcode"].append(res.status_code)
+                    respStatus["location"].append(res.url)
+                    respStatus["locationtimes"]+=1
+                respStatus["locationcode"].append(code)
+                respStatus["location"].append(resp.url)
+            statusCount["rightCount"].append(1)#命中
+            #{"url":url,"status":respStatus,"resp":resp,"tag":tag}
+            #{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}
+            singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"api":ele["api"]}
+        except requests.exceptions.Timeout as e:
+            # timeoutCount+=1
+            statusCount["timeoutCount"].append(1)
+            if DEBUG:
+                if len(statusCount["timeoutCount"])%10==0:
+                    print(f"TIMEOUT {len(statusCount['timeoutCount'])} : {ele['url']}")
+        except requests.exceptions.ConnectionError as e:
+            try:
+                if "Connection reset by peer" in e:
+                    statusCount["connectResetCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectResetCount"])%10==0:
+                            print(f"Connection reset {len(statusCount['connectResetCount'])} : {ele['url']}")
+                else:
+                    statusCount["connectErrorCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectResetCount"])%10==0:
+                            print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+            except:
+                statusCount["connectErrorCount"].append(1)
+                if DEBUG:
+                    if len(statusCount["connectResetCount"])%10==0:
+                        print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        except requests.exceptions.RequestException as e:
+            statusCount["connectErrorCount"].append(1)
+            if DEBUG:
+                # print(f"{url} : 错误信息:  {e}")
+                if len(statusCount["connectErrorCount"])%10==0:
+                    print(f"其他连接错误 {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        # finally:#有毒
+        #     singlestatus={}
+        #     print(f"finally:singlestatus:{singlestatus}")
+        if singlestatus:
+            return singlestatus
+        return
     #废弃
     def apiFuzzMode(self,apiList):
         """拼接fuzz获得正确链接
