@@ -215,6 +215,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         diffResults=sorted([d for d in Results if d['status']['size'] != most_common_size],key=lambda item:item["api"])
         result=most_common_elements[0]
         if result["status"]["code"]!=404:
+            print()
             print(f"默认(初始)响应页面:")
             if result["status"]['locationtimes']==0:
                     print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
@@ -232,8 +233,10 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                     print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
                 else:
                     code=",".join([str(x) for x in result["status"]["locationcode"]])
-                    location="-->".join(result["status"]["location"])
+                    location=" --> ".join(result["status"]["location"])
                     print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+        if DEBUG:
+            print(f"验证:发包次数: {len(countspider)} 次")
 def somehowreplaceUrlfinder(url):
     """移除urlfinder调用
 
@@ -555,6 +558,8 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
     print("")
     singlestatus=userInputApi(mode,origionUrl,apiPaths,apiList,anchorRespList)
     configdomainurlroot=[]#单次结束置空
+    if DEBUG:
+        print(f"单输入:发包次数: {len(countspider)} 次")
     return singlestatus
 def batchUserInputApi(mode,urlList,apiPaths):
     batchTaskStatus=[]
@@ -571,6 +576,8 @@ def batchUserInputApi(mode,urlList,apiPaths):
     printer=apiFuzz()
     printer.batchTaskStatusOutput(mode,batchTaskStatus)
     #*[{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"validApis":validApis,"suspiciousApis":suspiciousApis},}]
+    if DEBUG:
+        print(f"批输入:发包次数: {len(countspider)} 次")
 def userInputApi(mode,origionUrl,apiPaths,apiList,anchorRespList):
     """用户指定api路径的情况，支持api和完整api URL的情况
 
@@ -615,6 +622,7 @@ def jsonRespOutput(resp,respstatus):
 class jsSpider():
     #todo 实施多线程爬取
     def Spider(self,url,isdeep=True):
+        requests.packages.urllib3.disable_warnings()
         url =urllib.parse.unquote(url)
         if self.getEndUrl(url):
             return
@@ -624,7 +632,7 @@ class jsSpider():
             "Accept": "",
         }
         try:
-            resp=requests.get(url,headers=headers,timeout=(5,10))
+            resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
         except Exception as e:
             print(f"请求出错, {e}")
             return
@@ -1898,6 +1906,8 @@ class apiFuzz:
         myFuzz=apiFuzz()
         singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
         configdomainurlroot=[]#单次结束置空
+        if DEBUG:
+            print(f"单fuzz:发包次数: {len(countspider)} 次")
         return singlestatus
     # batch模式下增加结果统计
     def batchApiFuzzInAction(self,mode,urlList,noneApis):
@@ -1914,6 +1924,8 @@ class apiFuzz:
         #输出批任务状态
         self.batchTaskStatusOutput(mode,batchTaskStatus)
         # #*[{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"validApis":validApis,"suspiciousApis":suspiciousApis},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}]}]
+        if DEBUG:
+            print(f"批fuzz:发包次数: {len(countspider)} 次")
     #批处理任务状态输出
     def batchTaskStatusOutput(self,mode,batchTaskStatus):
         #输出批任务状态
@@ -2344,6 +2356,7 @@ class apiFuzz:
         #* fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
         #*敏感信息[{'url': 'url', 'api': 'api', 'tag': 'idcard', 'desc': '身份证', 'count': 1}]
         """
+        countspider.append(1)#统计发包次数
         if "nobody" in mode:#禁用body输出
             noOutput=True
         else:
@@ -2357,7 +2370,7 @@ class apiFuzz:
         try:
             #todo 这里没有处理响应超大的情况
             #todo 处理url为下载二进制等大型文件的情况 屏蔽？exe mp4 mp3等内容 融合在危险端口判断内
-            resp=requests.get(url,headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             #todo 增加颜色输出
             try:
                 code=resp.status_code
@@ -2476,13 +2489,14 @@ class apiFuzz:
         返回响应体列表
         [{"code":code,"size":content_size,"type":contentType,"title":page_title}]
         """
+        countspider.append(1)#统计发包次数
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept": "",
             "Accept-Charset": "utf-8",
         }
         try:
-            resp=requests.get(url,headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             try:
                 code=resp.status_code
             except:
@@ -2546,13 +2560,14 @@ class apiFuzz:
         返回响应体列表
         [{"code":code,"size":content_size,"type":contentType,"title":page_title}]
         """
+        countspider.append(1)#统计发包次数
         headers = {#获取text/html响应
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             # "Accept": "*/*"
         }
         try:
-            resp=requests.get(url,headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             try:
                 code=resp.status_code
             except:
@@ -2614,13 +2629,14 @@ class apiFuzz:
         列表形式
         [{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag}]
         """
+        countspider.append(1)#统计发包次数
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept-Charset": "utf-8",
             "Accept": "",
         }
         try:#ele {"url":url,"tag":"completeApi","api":api}
-            resp=requests.get(ele["url"],headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             try:
                 code=resp.status_code
             except:
@@ -2684,6 +2700,7 @@ class apiFuzz:
         列表形式
         [{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag}]
         """
+        countspider.append(1)#统计发包次数
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -2691,7 +2708,7 @@ class apiFuzz:
             "Accept-Charset": "utf-8",
         }
         try:#ele {"url":url,"tag":"completeApi","api":api}
-            resp=requests.get(ele["url"],headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+            resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             try:
                 code=resp.status_code
             except:
@@ -2757,6 +2774,7 @@ class apiFuzz:
         列表形式
         #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
         """
+        countspider.append(1)#统计发包次数
         if not headers:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
@@ -2765,9 +2783,9 @@ class apiFuzz:
             }
         try:#ele {"url":url,"tag":"default","api":api}
             if redirect:#重定向默认
-                resp=requests.get(ele["url"],headers=headers,timeout=(5,10))#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             else:
-                resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False, verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
             try:
                 code=resp.status_code
             except:
