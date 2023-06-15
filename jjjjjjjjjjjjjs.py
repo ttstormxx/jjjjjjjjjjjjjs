@@ -197,6 +197,8 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     threads=50
     anchorRespList=[]
     Results=fuzz.taskUsingThread(fuzz.universalGetRespWithTagUsingRequests,mode,origionUrl,urlListWithTag,anchorRespList,threads)
+    counter=Counter([d["status"]["code"] for d in Results])#["500"]
+
     #排除404响应
     Results=[x for x in Results if x["status"]["code"]!=404]
     #标记所有初始响应
@@ -210,9 +212,10 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     # 找到具有最多相同size键的元素
     # if most_common_size:
     #*去除半数以上的500，403，401响应，输出命中次数
-    counter=Counter([d["status"]["code"] for d in Results])#["500"]
+    #todo 分离默认页面定位、差异页面分类函数
+    # counter=Counter([d["status"]["code"] for d in Results])#["500"]
     defaultResults=[x for x in Results if x["tag"]=="cleanurl"]
-    indexResult=[
+    indexResult=[#todo 作为用来区分首页的标志
         "doesn't work properly without JavaScript enabled",
     ]
     if defaultResults:
@@ -269,8 +272,13 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                     code=",".join([str(x) for x in result["status"]["locationcode"]])
                     location=" --> ".join(result["status"]["location"])
                     print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
-    print(f"命中: 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次")
     print()
+    print(f"命中: 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
+    print()
+    #todo 可能要调整位置
+    #敏感信息获取展示
+    fuzzTest=apiFuzz()
+    fuzzTest.infoScratcherAndDisplay(Results)
     if DEBUG:
         print(f"验证:发包次数: {len(countspider)} 次")
 def somehowreplaceUrlfinder(url):
@@ -292,6 +300,7 @@ def somehowreplaceUrlfinder(url):
     endUrl=[]
 
     return lst
+
 
 def apiToUrlRearrange(origionUrl,apiList):
     cleanurl=getCleanUrl(origionUrl)
@@ -1511,7 +1520,7 @@ class apiFuzz:
         return
     def getWonderfulInfoFromSingleResult(self,respdicc):
         """敏感信息发现
-        #返回 {"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size","type":contentType, "count": 1}
+        #返回 {"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size","type":contentType, "count": 1, "matches":[]}
         #fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
         Args:
             fuzzresult (_type_): _description_
@@ -1531,6 +1540,42 @@ class apiFuzz:
         if infolist["url"]!="":
             return infolist
         return
+    #敏感信息、文件、接口获取和展示
+    def infoScratcherAndDisplay(self,respList):
+        """敏感信息、文件、接口获取和展示统一位置
+        #*用于爬取展示
+        #*返回 {"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size","type":contentType, "count": 1, "matches":[]}
+        Args:
+            respList (_type_): _description_
+        """
+        infoFile=self.getSuspiciousFileFromFuzzResult(respList)
+        # infoApi=self.getSuspiciousApiFromFuzzResult()
+        infoInfo=self.getWonderfulRespFromFuzzResult(respList)
+        #展示
+        #敏感文件发现
+        #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
+        # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
+        if infoFile:
+            print()
+            print(f"发现疑似敏感文件如下:")
+            for info in infoFile:
+                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+        else:
+            print()
+            print(f"未发现敏感文件")
+        #敏感信息输出
+        if infoInfo:
+            print()
+            print("敏感信息发现如下:")
+            for info in infoInfo:
+                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # print(" ".join(info["matches"]))
+                if info["tag"]!="username" and info["tag"]!="password":
+                    infomatch=" ".join([x[0] for x in info["matches"][:10]])
+                    print(f"{infomatch}")
+        else:
+            print()
+            print("未发现敏感信息")
     #高亮标记
     def colorOutput(self,respstatus):
         """高亮标记
