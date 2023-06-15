@@ -85,10 +85,11 @@ sensitiveInfoRegex=[#todo 待完善
 ]
 #todo 扩充参数缺失关键字库
 missingRegex=[
-            {"regex":r'参数.+不能为空',"tag":"参数不能为空"},
-            {"regex":r'缺少参数',"tag":"缺少参数"},
-            {"regex":r'is missing',"tag":"is missing"},
-            {"regex":r'parameter.+is not present',"tag":"is not present"},
+            {"regex":r'参数.+不能为空',"tag":"missing","desc":"参数不能为空"},
+            {"regex":r'不能为空',"tag":"missing","desc":"参数不能为空"},
+            {"regex":r'缺少参数',"tag":"missing","desc":"缺少参数"},
+            {"regex":r'is missing',"tag":"missing","desc":"is missing"},
+            {"regex":r'parameter.+is not present',"tag":"missing","desc":"is not present"},
         ]
 #todo 扩充完善指纹库
 apiFingerprintWithTag=[
@@ -99,6 +100,14 @@ apiFingerprintWithTag=[
     {"fingerprint":"<title>Swagger-Bootstrap-UI</title>","tag":"Swagger-Bootstrap-UI"},
     {"fingerprint":"{\"_links\":{\"self\":{\"href\":\"","tag":"actuator"},
     ]#稳定api响应页面swagger springboot
+
+indexKeywords=[#todo 作为用来区分首页的标志
+        {"regex":r'doesn\'t work properly without JavaScript enabled',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<link href="[^\<\>]*app.*\.js"',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<script src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<script src=[^\<\>]*main.*\.js>',"tag":"webpack","desc":"webpack"},
+    ]
 
 
 #爬取实现
@@ -192,8 +201,8 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     # urlListWithTag=[cleanurl+ele["url"] for ele in apiList]
     urlListWithTag=[]
     fuzz=apiFuzz()
-    apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
-    apiList.append(apiNoneExist)
+    # apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
+    # apiList.append(apiNoneExist)
     cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
     apiList.append(cleanurlApi)
     for ele in apiList:
@@ -206,6 +215,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     counter=Counter([d["status"]["code"] for d in Results])#["500"]
 
     #排除404响应
+    #todo 404也有可能是默认响应页面，暂不考虑
     Results=[x for x in Results if x["status"]["code"]!=404]
     #标记所有初始响应
     # 从每个字典中提取size键
@@ -220,36 +230,33 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     #*去除半数以上的500，403，401响应，输出命中次数
     #todo 分离默认页面定位、差异页面分类函数
     # counter=Counter([d["status"]["code"] for d in Results])#["500"]
-    defaultResults=[x for x in Results if x["tag"]=="cleanurl"]
-    indexResult=[#todo 作为用来区分首页的标志
-        "doesn't work properly without JavaScript enabled",
-    ]
-    if defaultResults:
-        # if "doesn't work properly without JavaScript enabled" in defaultResults[0]["resp"].text:
-        defaultResult=defaultResults[0]
-        if defaultResult["status"]["code"]!=404:
-            # most_common_elements = sorted([d for d in Results if d['status']['size'] == most_common_size],key=lambda item:item["api"])
-            # diffResults=sorted([d for d in Results if d['status']['size'] != most_common_size],key=lambda item:item["api"])
-            most_common_elements = sorted([d for d in Results if d['status']['size'] == defaultResult["status"]["size"]],key=lambda item:item["api"])
-            halfnum=(len(Results)-len(most_common_elements))/2
-            if counter[500]>halfnum and counter[500]>8:
-                Results=[d for d in Results if d["status"]["code"]!=500]
-            if counter[403]>halfnum and counter[403]>8:
-                Results=[d for d in Results if d["status"]["code"]!=403]
-            if counter[401]>halfnum and counter[401]>8:
-                Results=[d for d in Results if d["status"]["code"]!=401]
-            diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["api"])
-            # result=most_common_elements[0]
-            result=defaultResult
-            if result["status"]["code"]!=404:
-                print()
-                print(f"默认(初始)响应页面: 命中 {len(most_common_elements)} 次")
-                if result["status"]['locationtimes']==0:
-                        print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
-                else:
-                    code=",".join([str(x) for x in result["status"]["locationcode"]])
-                    location=" --> ".join(result["status"]["location"])
-                    print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+    # defaultResults=[x for x in Results if x["tag"]=="cleanurl"]
+    defaultResult=locateDefaultPage(Results)
+    #todo 过滤0大小的响应
+    #todo 默认页面识别
+    # if defaultResults:
+    if defaultResult:
+        # defaultResult=defaultResults[0]
+        # if defaultResult["status"]["code"]!=404:
+        most_common_elements = sorted([d for d in Results if d['status']['size'] == defaultResult["status"]["size"]],key=lambda item:item["api"])
+        halfnum=(len(Results)-len(most_common_elements))/2
+        if counter[500]>halfnum and counter[500]>8:
+            Results=[d for d in Results if d["status"]["code"]!=500]
+        if counter[403]>halfnum and counter[403]>8:
+            Results=[d for d in Results if d["status"]["code"]!=403]
+        if counter[401]>halfnum and counter[401]>8:
+            Results=[d for d in Results if d["status"]["code"]!=401]
+        diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["api"])
+        result=defaultResult
+        if result["status"]["code"]!=404:
+            print()
+            print(f"默认(初始)响应页面: 命中 {len(most_common_elements)} 次")
+            if result["status"]['locationtimes']==0:
+                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+            else:
+                code=",".join([str(x) for x in result["status"]["locationcode"]])
+                location=" --> ".join(result["status"]["location"])
+                print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
         if diffResults:
             print()
             print(f"差异响应页面: {len(diffResults)} 个")
@@ -279,7 +286,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                     location=" --> ".join(result["status"]["location"])
                     print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
     print()
-    print(f"命中: 200: {counter[200]} 次 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
+    print(f"命中: 200: {counter[200]} 次 405: {counter[405]} 次 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
     print()
     #todo 可能要调整位置
     #敏感信息获取展示
@@ -308,6 +315,37 @@ def somehowreplaceUrlfinder(url):
 
     return lst
 
+#识别初始页面
+def locateDefaultPage(respList):
+    """定位初始页面
+
+    Args:
+        respList (_type_): _description_
+    """
+    Results=respList.copy()
+
+    for resp in respList:
+        tmpindex={}
+        for regex in indexKeywords:
+            matches=re.findall(regex["regex"],resp["resp"].text)
+            if matches:
+                tmpindex=resp
+                break
+        if tmpindex:
+            break
+
+    defaultResult=[x for x in Results if x["tag"]=="cleanurl"][0]
+    if defaultResult:
+        if tmpindex:
+            if tmpindex["status"]["size"]!=defaultResult["status"]["size"]:
+                defaultResult=tmpindex
+                tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["index"]]
+                tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
+                defaultResult=tmpindexs[0]
+    #404处理 404也可能是默认页面
+    if defaultResult:
+        return defaultResult
+    return
 
 def apiToUrlRearrange(origionUrl,apiList):
     cleanurl=getCleanUrl(origionUrl)
@@ -1470,6 +1508,8 @@ class apiFuzz:
         juicykeywords=juicyApiListKeyWords.copy()
         juicykeywords+=juicyFileExtList
         for respdicc in fuzzResultList:
+            if respdicc["status"]["type"]=="html":#过滤html筛选
+                continue
             info={}
             tag=""
             count=0
@@ -1575,7 +1615,7 @@ class apiFuzz:
                     matches=re.findall(regex["regex"],info["resp"].text[:1000].lower())
                     if matches:
                         count=len(matches)
-                        tmp={"url": info["url"], "api": info["api"], "tag": "parammissing", "desc": regex["tag"],"code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": count}
+                        tmp={"url": info["url"], "api": info["api"], "tag": regex["tag"], "desc": regex["desc"],"code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": count}
                         constructs.append(tmp)
         if constructs:
             return constructs
@@ -1600,9 +1640,9 @@ class apiFuzz:
             for info in infoApi:
                 print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
-            # if DEBUG:
-            print()
-            print(f"未发现敏感接口")
+            if DEBUG:
+                print()
+                print(f"未发现敏感接口")
         #敏感文件发现
         #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
         # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
@@ -1612,8 +1652,9 @@ class apiFuzz:
             for info in infoFile:
                 print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
-            print()
-            print(f"未发现敏感文件")
+            if DEBUG:
+                print()
+                print(f"未发现敏感文件")
         #可构造数据包接口展示
         if infoConstruct:
             print()
@@ -1621,8 +1662,9 @@ class apiFuzz:
             for info in infoConstruct:
                 print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
-            print()
-            print(f"未发现可构造数据包接口")
+            if DEBUG:
+                print()
+                print(f"未发现可构造数据包接口")
         #敏感信息输出
         if infoInfo:
             print()
@@ -1634,8 +1676,9 @@ class apiFuzz:
                     infomatch=" ".join([x[0] for x in info["matches"][:10]])
                     print(f"{infomatch}")
         else:
-            print()
-            print("未发现敏感信息")
+            if DEBUG:
+                print()
+                print("未发现敏感信息")
     #高亮标记
     def colorOutput(self,respstatus):
         """高亮标记
@@ -2419,6 +2462,7 @@ class apiFuzz:
                 #* 其他Method也有可能传入apiList为字典，只能在这里判断敏感端口
                 #敏感端口发现 从fuzzResultList
                 #返回[{"url": "url", "api": "api", "tag": "upload", "desc": "upload","code":"code","size":"size","count": 1}]
+                #todo 分离敏感信息发现函数
                 anchors=self.getApiWithoutTokenAnchor(fuzzResultList)
                 juicyApiList=self.getSuspiciousApiFromFuzzResult(anchors,fuzzResultList)
                 #敏感信息发现
