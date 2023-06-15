@@ -205,11 +205,16 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     # apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
     # apiList.append(apiNoneExist)
     cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
-    apiList.append(cleanurlApi)
+    #多重添加，防止无响应导致的错误
+    for i in range(10):
+        #加tag防止key值重复，导致多重添加url，但元素数量不变
+        tag=fuzz.generate_random_string(3)
+        apiList.append({"url":"/","tag":f"cleanurl-{tag}","api":"/"})
     for ele in apiList:
         ele["url"]=cleanurl+ele["url"]
         urlListWithTag.append(ele)
     #anchor
+    # threads=50
     threads=50
     anchorRespList=[]
     Results=fuzz.taskUsingThread(fuzz.universalGetRespWithTagUsingRequests,mode,origionUrl,urlListWithTag,anchorRespList,threads)
@@ -220,11 +225,11 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     Results=[x for x in Results if x["status"]["code"]!=404]
     #标记所有初始响应
     # 从每个字典中提取size键
-    sizes = [d['status']['size'] for d in Results]
+    # sizes = [d['status']['size'] for d in Results]
     # 使用Counter计数
-    size_counts = Counter(sizes)
+    # size_counts = Counter(sizes)
     # 找到计数最高的元素
-    most_common_size = size_counts.most_common(1)[0][0]
+    # most_common_size = size_counts.most_common(1)[0][0]
     # print(f"最大相同值: {most_common_size}")
     # 找到具有最多相同size键的元素
     # if most_common_size:
@@ -291,8 +296,8 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     print()
     #todo 可能要调整位置
     #敏感信息获取展示
-    fuzzTest=apiFuzz()
-    fuzzTest.infoScratcherAndDisplay(Results)
+    # fuzzTest=apiFuzz()
+    fuzz.infoScratcherAndDisplay(Results)
     if DEBUG:
         print()
         print(f"验证:发包次数: {len(countspider)} 次")
@@ -325,8 +330,8 @@ def locateDefaultPage(respList):
     """
     Results=respList.copy()
 
+    tmpindex={}
     for resp in respList:
-        tmpindex={}
         for regex in indexKeywords:
             matches=re.findall(regex["regex"],resp["resp"].text)
             if matches:
@@ -334,8 +339,11 @@ def locateDefaultPage(respList):
                 break
         if tmpindex:
             break
-
-    defaultResult=[x for x in Results if x["tag"]=="cleanurl"][0]
+    try:
+        # defaultResult=[x for x in Results if x["tag"]=="cleanurl"][0]
+        defaultResult=[x for x in Results if x["tag"].startswith("cleanurl")][0]
+    except:
+        defaultResult={}
     if defaultResult:
         if tmpindex:
             if tmpindex["status"]["size"]!=defaultResult["status"]["size"]:
@@ -343,6 +351,9 @@ def locateDefaultPage(respList):
                 tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["index"]]
                 tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
                 defaultResult=tmpindexs[0]
+    else:
+        if tmpindex:
+            defaultResult=tmpindex
     #404处理 404也可能是默认页面
     if defaultResult:
         return defaultResult
@@ -1897,7 +1908,7 @@ class apiFuzz:
             else:
                 print("nofuzz模式:指纹识别结束，未发现有效api")
         return
-
+    #tag
     def generate_random_string(self,length):
         """打tag
 
@@ -2431,11 +2442,12 @@ class apiFuzz:
         #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default","dead":"alive"}
         # 创建线程池对象
         print("Fuzzing in action")
-        if DEBUG:
-            threads=300
-            print(f"debugging threads: {threads}")
-        else:
-            print(f"threads: {threads}")
+        # if DEBUG:
+        #     threads=300
+        #     print(f"debugging threads: {threads}")
+        # else:
+        #     print(f"threads: {threads}")
+        print(f"threads: {threads}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
             # 向线程池提交任务
             futures = []
@@ -2678,12 +2690,12 @@ class apiFuzz:
                 else:
                     statusCount["connectErrorCount"].append(1)
                     if DEBUG:
-                        if len(statusCount["connectResetCount"])%10==0:
+                        if len(statusCount["connectErrorCount"])%10==0:
                             print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {url}")
             except:
                 statusCount["connectErrorCount"].append(1)
                 if DEBUG:
-                    if len(statusCount["connectResetCount"])%10==0:
+                    if len(statusCount["connectErrorCount"])%10==0:
                         print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {url}")
         except requests.exceptions.RequestException as e:
             statusCount["connectErrorCount"].append(1)
@@ -2747,12 +2759,12 @@ class apiFuzz:
                 else:
                     statusCount["connectErrorCount"].append(1)
                     if DEBUG:
-                        if len(statusCount["connectResetCount"])%10==0:
+                        if len(statusCount["connectErrorCount"])%10==0:
                             print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {url}")
             except:
                 statusCount["connectErrorCount"].append(1)
                 if DEBUG:
-                    if len(statusCount["connectResetCount"])%10==0:
+                    if len(statusCount["connectErrorCount"])%10==0:
                         print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {url}")
         except requests.exceptions.RequestException as e:
             statusCount["connectErrorCount"].append(1)
@@ -2819,12 +2831,12 @@ class apiFuzz:
                 else:
                     statusCount["connectErrorCount"].append(1)
                     if DEBUG:
-                        if len(statusCount["connectResetCount"])%10==0:
+                        if len(statusCount["connectErrorCount"])%10==0:
                             print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
             except:
                 statusCount["connectErrorCount"].append(1)
                 if DEBUG:
-                    if len(statusCount["connectResetCount"])%10==0:
+                    if len(statusCount["connectErrorCount"])%10==0:
                         print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
         except requests.exceptions.RequestException as e:
             statusCount["connectErrorCount"].append(1)
@@ -2893,12 +2905,12 @@ class apiFuzz:
                 else:
                     statusCount["connectErrorCount"].append(1)
                     if DEBUG:
-                        if len(statusCount["connectResetCount"])%10==0:
+                        if len(statusCount["connectErrorCount"])%10==0:
                             print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
             except:
                 statusCount["connectErrorCount"].append(1)
                 if DEBUG:
-                    if len(statusCount["connectResetCount"])%10==0:
+                    if len(statusCount["connectErrorCount"])%10==0:
                         print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
         except requests.exceptions.RequestException as e:
             statusCount["connectErrorCount"].append(1)
@@ -2982,12 +2994,12 @@ class apiFuzz:
                 else:
                     statusCount["connectErrorCount"].append(1)
                     if DEBUG:
-                        if len(statusCount["connectResetCount"])%10==0:
+                        if len(statusCount["connectErrorCount"])%10==0:
                             print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
             except:
                 statusCount["connectErrorCount"].append(1)
                 if DEBUG:
-                    if len(statusCount["connectResetCount"])%10==0:
+                    if len(statusCount["connectErrorCount"])%10==0:
                         print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
         except requests.exceptions.RequestException as e:
             statusCount["connectErrorCount"].append(1)
