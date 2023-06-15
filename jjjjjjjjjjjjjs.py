@@ -22,6 +22,7 @@ class ErrorClass:
 #todo 这里需要修改为在api中判断而不是在url中，域名中有可能出现列表中的值
 #todo 识别非webpack站点，仅输出js信息 输出匹配敏感信息?
 dangerApiList=["del","delete","insert","logout","remove","drop","shutdown","stop","poweroff","restart","rewrite"]
+apiWhiteList=["model"]#恢复命中危险端口的del中的model
 commonApiList=["api","Api","system","sys","user"]#常见api根路径
 # 完善黑名单功能
 apiRootBlackList=["\\","#","$","@","*","+","-","|","!","%","^","~","[","]"]#api根黑名单，这里的值不可能出现在根API 起始值 中
@@ -414,7 +415,8 @@ def removeDangerousApi(urlList):
         urlList (_type_): _description_
     """
     cleanUrlList=[url for url in urlList if not any(api in url.lower() for api in dangerApiList)]
-    dangerUrlList=[url for url in urlList if any(api in url.lower() for api in dangerApiList)]
+    # dangerUrlList=[url for url in urlList if any(api in url.lower() for api in dangerApiList)]
+    dangerUrlList=[url for url in urlList if any(api in url.lower().replace("model","") for api in dangerApiList)]
     filename=".js_dangerous.txt"
     if len(dangerUrlList)!=0:
         writeLinesIntoFile(dangerUrlList,filename)
@@ -1566,6 +1568,13 @@ class apiFuzz:
         for respdicc in fuzzResultList:
             info=self.getWonderfulInfoFromSingleResult(respdicc)
             if info:
+                duplicate=False
+                for x in infolist:
+                    if x["tag"]==info["tag"] and x["size"]==info["size"]:
+                        duplicate=True
+                        break
+                if duplicate:
+                    continue
                 infolist.append(info)
         if infolist:
             return infolist
