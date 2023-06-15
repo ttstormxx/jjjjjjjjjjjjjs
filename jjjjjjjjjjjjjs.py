@@ -83,7 +83,13 @@ sensitiveInfoRegex=[#todo 待完善
     {"tag":"MAC Address","desc":"MAC地址","regex":r'(^([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5})|[^a-zA-Z0-9]([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5}))'},
     {"tag":"username","desc":"username","regex":r'["\']?((u|U)sername|USERNAME)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?username[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
 ]
-
+#todo 扩充参数缺失关键字库
+missingRegex=[
+            {"regex":r'参数.+不能为空',"tag":"参数不能为空"},
+            {"regex":r'缺少参数',"tag":"缺少参数"},
+            {"regex":r'is missing',"tag":"is missing"},
+            {"regex":r'parameter.+is not present',"tag":"is not present"},
+        ]
 #todo 扩充完善指纹库
 apiFingerprintWithTag=[
     #{"fingerprint":"fingerprint","tag":"tag"}
@@ -273,13 +279,14 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                     location=" --> ".join(result["status"]["location"])
                     print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
     print()
-    print(f"命中: 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
+    print(f"命中: 200: {counter[200]} 次 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
     print()
     #todo 可能要调整位置
     #敏感信息获取展示
     fuzzTest=apiFuzz()
     fuzzTest.infoScratcherAndDisplay(Results)
     if DEBUG:
+        print()
         print(f"验证:发包次数: {len(countspider)} 次")
 def somehowreplaceUrlfinder(url):
     """移除urlfinder调用
@@ -1448,7 +1455,7 @@ class apiFuzz:
             return suspiciousFileList
         return
     #todo 根据状态码进行过滤  500 401
-    def getSuspiciousApiFromFuzzResult(self,anchors,fuzzResultList):
+    def getSuspiciousApiFromFuzzResult(self,anchors={},fuzzResultList=[]):
         """从fuzz结果中发现可疑的响应 根据juicyApiListKeyWords 发现高可用接口
         #fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
         #返回 [{"url": "url", "api": "api", "tag": "upload", "desc": "upload","code":"code","size":"size","type":contentType,"count": 1}]
@@ -1468,9 +1475,14 @@ class apiFuzz:
             count=0
             for key in juicykeywords:
                 # if key in respdicc["api"].lower():#todo 这里的判断逻辑需要优化
-                if key in respdicc["api"].lower() and respdicc["status"]["size"] not in range(anchors["small"],anchors["big"]):#todo 这里的判断逻辑需要优化
-                    tag+=key+","
-                    count+=1
+                if anchors:
+                    if key in respdicc["api"].lower() and respdicc["status"]["size"] not in range(anchors["small"],anchors["big"]):#todo 这里的判断逻辑需要优化
+                        tag+=key+","
+                        count+=1
+                else:#spider模式
+                    if key in respdicc["api"].lower():#todo 这里的判断逻辑需要优化
+                        tag+=key+","
+                        count+=1
             if tag!="":
                 tag=tag.strip(",")
                 info={"url": respdicc["url"], "api": respdicc["api"], "tag": tag, "desc": tag,"code":respdicc["status"]["code"],"size":respdicc["status"]["size"],"type":respdicc["status"]["type"],"count": count}
@@ -1540,6 +1552,34 @@ class apiFuzz:
         if infolist["url"]!="":
             return infolist
         return
+
+    #可构造包提示
+    def apisPossibleConstruct(self,fuzzResultList):
+        """提示可构造的数据包，参数缺失，405
+        #fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
+        #返回 [{"url": "url", "api": "api", "tag": "config", "desc": "可构造数据包","code":"code","size":"size","type":contentType,"count": 1}]
+        Args:
+            fuzzResultList (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        constructs=[]
+        for info in fuzzResultList:
+            if info["status"]["code"]==405:#todo 405自动切换method访问检测
+                tmp={"url": info["url"], "api": info["api"], "tag": "methodchange", "desc": "切换method","code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": 1}
+                constructs.append(tmp)
+            else:
+                for regex in missingRegex:
+                    count=0
+                    matches=re.findall(regex["regex"],info["resp"].text[:1000].lower())
+                    if matches:
+                        count=len(matches)
+                        tmp={"url": info["url"], "api": info["api"], "tag": "parammissing", "desc": regex["tag"],"code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": count}
+                        constructs.append(tmp)
+        if constructs:
+            return constructs
+        return
     #敏感信息、文件、接口获取和展示
     def infoScratcherAndDisplay(self,respList):
         """敏感信息、文件、接口获取和展示统一位置
@@ -1549,24 +1589,44 @@ class apiFuzz:
             respList (_type_): _description_
         """
         infoFile=self.getSuspiciousFileFromFuzzResult(respList)
-        # infoApi=self.getSuspiciousApiFromFuzzResult()
+        infoApi=self.getSuspiciousApiFromFuzzResult(fuzzResultList=respList)
         infoInfo=self.getWonderfulRespFromFuzzResult(respList)
+        infoConstruct=self.apisPossibleConstruct(respList)
         #展示
+        #敏感接口
+        if infoApi:
+            print()
+            print(f"发现敏感接口如下(不包含危险接口): {len(infoApi)} 个")
+            for info in infoApi:
+                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+        else:
+            # if DEBUG:
+            print()
+            print(f"未发现敏感接口")
         #敏感文件发现
         #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
         # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
         if infoFile:
             print()
-            print(f"发现疑似敏感文件如下:")
+            print(f"发现疑似敏感文件如下: {len(infoFile)} 个")
             for info in infoFile:
                 print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
             print()
             print(f"未发现敏感文件")
+        #可构造数据包接口展示
+        if infoConstruct:
+            print()
+            print(f"发现疑似可构造数据包接口如下: {len(infoConstruct)} 个")
+            for info in infoConstruct:
+                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+        else:
+            print()
+            print(f"未发现可构造数据包接口")
         #敏感信息输出
         if infoInfo:
             print()
-            print("敏感信息发现如下:")
+            print(f"敏感信息发现如下: {len(infoInfo)} 个")
             for info in infoInfo:
                 print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 # print(" ".join(info["matches"]))
@@ -2066,26 +2126,39 @@ class apiFuzz:
         if status["dead"]=="alive":
             if not "nofuzz" in mode:
                 if status["juicyApiList"]:
-                        print()
-                        print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
-                        for info in status["juicyApiList"]:
-                            print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                    print()
+                    print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
+                    for info in status["juicyApiList"]:
+                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                else:
+                    # if DEBUG:
+                    print()
+                    print(f"未发现敏感接口")
                 #敏感文件发现
                 #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
                 # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
                 if status["sensitiveFileList"]:
                     print()
-                    print(f"发现疑似敏感文件如下:")
+                    print(f"发现疑似敏感文件如下: {len(status['sensitiveFileList'])} 个")
                     for info in status["sensitiveFileList"]:
                         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
-                    if DEBUG:
-                        print()
-                        print(f"未发现敏感文件")
+                    # if DEBUG:
+                    print()
+                    print(f"未发现敏感文件")
+                #可构造数据包接口展示
+                if status["possibleConstructList"]:
+                    print()
+                    print(f"发现疑似可构造数据包接口如下: {len(status['possibleConstructList'])} 个")
+                    for info in status["possibleConstructList"]:
+                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                else:
+                    print()
+                    print(f"未发现可构造数据包接口")
                 #敏感信息输出
                 if status["sensitivInfoList"]:
                     print()
-                    print("敏感信息发现如下:")
+                    print(f"敏感信息发现如下: {len(status['sensitivInfoList'])} 个")
                     for info in status["sensitivInfoList"]:
                         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                         # print(" ".join(info["matches"]))
@@ -2093,9 +2166,9 @@ class apiFuzz:
                             infomatch=" ".join([x[0] for x in info["matches"][:10]])
                             print(f"{infomatch}")
                 else:
-                    if DEBUG:
-                        print()
-                        print("未发现敏感信息")
+                    # if DEBUG:
+                    print()
+                    print("未发现敏感信息")
             #接口输出
             print()
             print("接口识别结果")
@@ -2354,6 +2427,7 @@ class apiFuzz:
                 #敏感文件发现
                 #返回 [{"url": "url", "api": "api", "tag": "xlsx", "desc": "xlsx","code":"code","size":"size","count": 1}]
                 sensitiveFileList=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
+                possibleConstructList=self.apisPossibleConstruct(fuzzResultList)
                 #有效api输出
                 cleanurl=getCleanUrl(origionUrl)
                 statusCount['rightCount']=[x.replace(cleanurl,"") for x in statusCount['rightCount']]
@@ -2371,7 +2445,8 @@ class apiFuzz:
                 #任务结果统计
                 #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default"}
                 #! 键值大小写让我掉泪
-                taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
+                # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
+                taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
                 if not validApis:
                     taskStatusCount["dead"]="dead"
                 return taskStatusCount
