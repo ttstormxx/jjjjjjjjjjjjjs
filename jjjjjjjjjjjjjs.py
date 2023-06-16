@@ -12,6 +12,7 @@ from collections import Counter
 import mimetypes
 import urllib.parse
 from urllib.parse import urlparse
+import json
 
 DEBUG=False
 Verbose=False
@@ -109,6 +110,8 @@ indexKeywords=[#todo 作为用来区分首页的标志
         {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
         {"regex":r'<script src=[^\<\>]*main.*\.js>',"tag":"webpack","desc":"webpack"},
     ]
+
+blackstatuscode=[502,500,403,401]#过滤敏感接口
 
 
 #爬取实现
@@ -292,7 +295,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                     location=" --> ".join(result["status"]["location"])
                     print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
     print()
-    print(f"命中: 200: {counter[200]} 次 405: {counter[405]} 次 500: {counter[500]} 次 403: {counter[403]} 次 401: {counter[401]} 次 404: {counter[404]} 次")
+    print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
     print()
     #todo 可能要调整位置
     #敏感信息获取展示
@@ -779,10 +782,12 @@ class jsSpider():
         #     "(href|action).{0,3}=.{0,3}[^\\s,^',^’,^\",^>,^<,^),^(]{2,250}",
         # ]
         #爬根配置
-        domainurlregex=r'window\._CONFIG\[\'domianURL\'\]\s=\s\'(https{0,1}://.*)\''
+        domainurlregex=r'window\._CONFIG\[\'domianURL\'\]\s=\s\'(https{0,1}://.*?)\''
         domain=re.findall(domainurlregex,res)
         if domain:
-            configdomainurlroot.append("/"+urlparse(domain[0]).path.strip("/"))
+            # configdomainurlroot.append("/"+urlparse(domain[0]).path.strip("/"))
+            for root in domain:#*兼容多个配置根情况
+                configdomainurlroot.append("/"+urlparse(root).path.strip("/"))
         urlregexs=[
             r'["\']http[^\s\'’"\>\<\)\(]{2,250}?[\"\']',
             r'=http[^\s\'’"\>\<\)\(]{2,250}',
@@ -1165,7 +1170,7 @@ class apiFuzz:
                     foot=self.footSize(i.strip("/"),j.strip("/"),delimiter)
                     if foot and foot not in common_prefixes:
                         # common_prefixes.append(foot)
-                        common_prefixes.append(delimiter+foot)
+                        common_prefixes.append(delimiter+foot.strip(delimiter))
         common_prefixes.sort(key=len)
         return common_prefixes
 
@@ -1342,8 +1347,20 @@ class apiFuzz:
                         # if "application/json" in res["status"]["type"]:
                         if "json" in res["status"]["type"]:#contenttype库实现
                             apiSpottedList.append(res)
+                        elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
+                            # if DEBUG:
+                            #     print(f"debuuuuuging----{res['status']['code']}------->{res['status']['type']}----->{res['status']['size']}----->{res['api']}")
+                            try:
+                                json.loads(res["resp"].text)
+                                # if DEBUG:
+                                #     print(f"debuuuging----->appending")
+                                apiSpottedList.append(res)
+                            except:
+                                pass
 
-            if len(apiSpottedList)!=0:#从这一批fuzz结果中发现
+            if apiSpottedList:#从这一批fuzz结果中发现
+                # if DEBUG:
+                #     print(f"debuggging------>apiSpottedList  {len(apiSpottedList)}")
                 print()
                 tags=[]
                 apis=[]#url列表
@@ -1520,22 +1537,40 @@ class apiFuzz:
         #合并juicyFileExtList
         juicykeywords=juicyApiListKeyWords.copy()
         juicykeywords+=juicyFileExtList
-        for respdicc in fuzzResultList:
-            if respdicc["status"]["type"]=="html":#过滤html筛选
-                continue
+        tmp=fuzzResultList.copy()
+        #if key in respdicc["api"].lower() and respdicc["status"]["size"] !=0 and respdicc["status"]["code"] not in blackstatuscode  and respdicc["status"]["size"] !=anchors["small"]:
+        tmp=[x for x in tmp if x["status"]["size"] !=0 and x["status"]["code"] not in blackstatuscode and x["status"]["type"] !="html"]
+        tmp=[x for x in tmp if any(api in x["api"].lower() for api in juicykeywords)]
+        if anchors:
+            tmp=[x for x in tmp if x["status"]["size"]!=anchors["small"]]
+        for respdicc in tmp:
+            # if respdicc["status"]["type"]=="html":#过滤html筛选
+            #     continue
             info={}
             tag=""
             count=0
             for key in juicykeywords:
                 # if key in respdicc["api"].lower():#todo 这里的判断逻辑需要优化
-                if anchors:
-                    if key in respdicc["api"].lower() and respdicc["status"]["size"] not in range(anchors["small"],anchors["big"]):#todo 这里的判断逻辑需要优化
-                        tag+=key+","
-                        count+=1
-                else:#spider模式
-                    if key in respdicc["api"].lower():#todo 这里的判断逻辑需要优化
-                        tag+=key+","
-                        count+=1
+                # if anchors:
+                #     if key in respdicc["api"].lower() and respdicc["status"]["size"] not in range(anchors["small"],anchors["big"]):#todo 这里的判断逻辑需要优化
+                #         tag+=key+","
+                #         count+=1
+                # else:#spider模式
+                #     if key in respdicc["api"].lower():#todo 这里的判断逻辑需要优化
+                #         tag+=key+","
+                #         count+=1
+                #*改用状态码进行过滤
+                if key in respdicc["api"].lower():
+                    tag+=key+","
+                    count+=1
+                # if anchors:
+                #     if key in respdicc["api"].lower() and respdicc["status"]["size"] !=0 and respdicc["status"]["code"] not in blackstatuscode  and respdicc["status"]["size"] !=anchors["small"]:
+                #         tag+=key+","
+                #         count+=1
+                # else:
+                #     if key in respdicc["api"].lower() and respdicc["status"]["size"] !=0 and respdicc["status"]["code"] not in blackstatuscode:
+                #         tag+=key+","
+                #         count+=1
             if tag!="":
                 tag=tag.strip(",")
                 info={"url": respdicc["url"], "api": respdicc["api"], "tag": tag, "desc": tag,"code":respdicc["status"]["code"],"size":respdicc["status"]["size"],"type":respdicc["status"]["type"],"count": count}
@@ -1649,7 +1684,8 @@ class apiFuzz:
             respList (_type_): _description_
         """
         infoFile=self.getSuspiciousFileFromFuzzResult(respList)
-        infoApi=self.getSuspiciousApiFromFuzzResult(fuzzResultList=respList)
+        anchors=self.getApiWithoutTokenAnchor2(respList)
+        infoApi=self.getSuspiciousApiFromFuzzResult(anchors=anchors,fuzzResultList=respList)
         infoInfo=self.getWonderfulRespFromFuzzResult(respList)
         infoConstruct=self.apisPossibleConstruct(respList)
         #展示
@@ -1785,8 +1821,9 @@ class apiFuzz:
                 print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
             #[{"url":url,"tag":"fingerprint","api":api}]
             return suspiciousApi
-        else:
-            print(f"配置根未识别到有效Api")
+        # else:
+        #     print(f"配置根未识别到有效Api")
+        #     print()
         return
     #指纹识别
     def feelPulse(self,mode,origionUrl,apiList,excludedApis=[]):
@@ -1806,10 +1843,19 @@ class apiFuzz:
                 print()
         #优先网站配置根识别
         if configdomainurlroot:
-            rootApi=configdomainurlroot[0]
-            rootfinger=self.feelRootPulse(mode,origionUrl,rootApi)
+            if DEBUG:
+                print(f"配置根: {configdomainurlroot}")
+            # rootApi=configdomainurlroot[0]
+            # rootfinger=self.feelRootPulse(mode,origionUrl,rootApi)
+            rootfinger=[]
+            for rootApi in configdomainurlroot:#*兼容多配置根模式
+                finger=self.feelRootPulse(mode,origionUrl,rootApi)
+                if finger:
+                    rootfinger+=finger
             if rootfinger:
                 return rootfinger
+            print(f"配置根未识别到有效Api")
+            print()
         #todo 用户输入模式 实施指纹识别之后，要修正这里的逻辑，增加输入api模式
         cleanurl=getCleanUrl(origionUrl)
         #去除api根黑名单
@@ -1979,6 +2025,7 @@ class apiFuzz:
         """
         print()
         cleanUrl=getCleanUrl(origionUrl)
+        # apiList.append("/")#添加根
         if mode.replace("batch","").startswith("fuzz"):#fuzz模式
             inputApis=self.uniqRootImplement2(inputApis)
             mergeApis=self.inputApisMerge(inputApis,apiList)
@@ -2033,15 +2080,30 @@ class apiFuzz:
                     #* 当前仅比较size
                     if res["status"]["code"] !=404 and not any(res["status"]["size"] == anchor["size"] for anchor in anchorRespList) and res["status"]["size"]!=0:#todo 这里有效api的size是有可能为0的
                         # if "application/json" in res["status"]["type"]:
-                        if "json" in res["status"]["type"]:#*修复content-type库连锁问题
+                        # if "json" in res["status"]["type"]:#*修复content-type库连锁问题
+                        if "json" in res["status"]["type"]:
                             apiSpottedList.append(res)
+                        elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
+                            try:
+                                json.loads(res["resp"].text)
+                                apiSpottedList.append(res)
+                            except:
+                                pass
             else:
                 for res in respList:#res的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
                     #* 当前仅比较size
                     if res["status"]["code"] !=404 and res["status"]["size"]!=0:#todo 这里有效api的size是有可能为0的
                         # if "application/json" in res["status"]["type"]:
-                        if "json" in res["status"]["type"]:#启用contentType库
+                        # if "json" in res["status"]["type"]:#启用contentType库
+                        if "json" in res["status"]["type"]:
                             apiSpottedList.append(res)
+                            # print(apiSpottedList)
+                        elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
+                            try:
+                                json.loads(res["resp"].text)
+                                apiSpottedList.append(res)
+                            except:
+                                pass
             if apiSpottedList:#从这一批fuzz结果中发现
                 apis=[]#url列表
                 for api in apiSpottedList:#{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag}
@@ -2126,6 +2188,32 @@ class apiFuzz:
             return anchorList
         else:
             return
+
+    #二次锚点2
+    def getApiWithoutTokenAnchor2(self,fuzzRespList):
+        """二次锚点2，通过过滤黑名单状态码，计算重复最多次的size
+
+        Args:
+            fuzzRespList (_type_): _description_
+        """
+        tmp=fuzzRespList.copy()
+        tmp=[x for x in tmp if x["status"]["code"] not in blackstatuscode]
+        tmp=[x for x in tmp if x["status"]["size"]!=0]
+        count=Counter([x["status"]["size"] for x in tmp])
+        maxer=max(count,key=count.get)
+        # if DEBUG:
+        #     print(f"debuuuging---orgionn--maxer---->{maxer}")
+        if maxer:
+            if count[maxer]>=len(tmp)/2 and count[maxer]>=8:
+                anchor={"small":maxer,"big":maxer}
+                # if DEBUG:
+                #     print(f"debuuuging---ultttt--anchor---->{anchor}")
+                return anchor
+            else:
+                if DEBUG:
+                    print(f"maxer未超过半数或未超过8个，不作为过滤点")
+        return
+
 
     def getRightInterfaceFromWrong():
         """获取有效api，暂未启用
@@ -2484,7 +2572,8 @@ class apiFuzz:
                 #敏感端口发现 从fuzzResultList
                 #返回[{"url": "url", "api": "api", "tag": "upload", "desc": "upload","code":"code","size":"size","count": 1}]
                 #todo 分离敏感信息发现函数
-                anchors=self.getApiWithoutTokenAnchor(fuzzResultList)
+                # anchors=self.getApiWithoutTokenAnchor(fuzzResultList)
+                anchors=self.getApiWithoutTokenAnchor2(fuzzResultList)
                 juicyApiList=self.getSuspiciousApiFromFuzzResult(anchors,fuzzResultList)
                 #敏感信息发现
                 #返回 [{"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size", "count": 1}]
