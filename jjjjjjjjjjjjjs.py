@@ -88,9 +88,12 @@ sensitiveInfoRegex=[#todo 待完善
 #todo 扩充参数缺失关键字库
 missingRegex=[
             {"regex":r'参数.+不能为空',"tag":"missing","desc":"参数不能为空"},
+            {"regex":r'不支持get请求方法，支持以下post',"tag":"missing","desc":"不支持的方法"},
             {"regex":r'不能为空',"tag":"missing","desc":"参数不能为空"},
             {"regex":r'缺少参数',"tag":"missing","desc":"缺少参数"},
             {"regex":r'is missing',"tag":"missing","desc":"is missing"},
+            {"regex":r'request method\s\'get\'\snot supported',"tag":"missing","desc":"method not supported"},
+            {"regex":r'request method\s\'post\'\snot supported',"tag":"missing","desc":"method not supported"},
             {"regex":r'parameter.+is not present',"tag":"missing","desc":"is not present"},
         ]
 #todo 扩充完善指纹库
@@ -787,7 +790,9 @@ class jsSpider():
         if domain:
             # configdomainurlroot.append("/"+urlparse(domain[0]).path.strip("/"))
             for root in domain:#*兼容多个配置根情况
-                configdomainurlroot.append("/"+urlparse(root).path.strip("/"))
+                path="/"+urlparse(root).path.strip("/")
+                if path and path not in configdomainurlroot:
+                    configdomainurlroot.append(path)
         urlregexs=[
             r'["\']http[^\s\'’"\>\<\)\(]{2,250}?[\"\']',
             r'=http[^\s\'’"\>\<\)\(]{2,250}',
@@ -1672,6 +1677,7 @@ class apiFuzz:
                         count=len(matches)
                         tmp={"url": info["url"], "api": info["api"], "tag": regex["tag"], "desc": regex["desc"],"code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": count}
                         constructs.append(tmp)
+                        continue
         if constructs:
             return constructs
         return
@@ -2026,13 +2032,31 @@ class apiFuzz:
         print()
         cleanUrl=getCleanUrl(origionUrl)
         # apiList.append("/")#添加根
-        if mode.replace("batch","").startswith("fuzz"):#fuzz模式
-            inputApis=self.uniqRootImplement2(inputApis)
-            mergeApis=self.inputApisMerge(inputApis,apiList)
-        else:#api模式
-            mergeApis=self.inputApisMerge(inputApis,apiList)
+        # if mode.replace("batch","").startswith("fuzz"):#fuzz模式
+        #     inputApis=self.uniqRootImplement2(inputApis)
+        #     mergeApis=self.inputApisMerge(inputApis,apiList)
+        # else:#api模式
+        #     mergeApis=self.inputApisMerge(inputApis,apiList)
+        #*加入公共前缀和阶梯切割
+        tmp=inputApis.copy()
+        commons=self.findLongestCommonPrefix(tmp)
+        stairs=self.stairsSplitAndStitch(tmp)
+
+        if DEBUG:
+            print(f"公共前缀 {len(commons)} 个: {commons}")
+        #* 这里公共前缀是多余的，阶梯切割会覆盖公共前缀，但是那又怎么样呢o_0
+        #阶梯切割
+        if DEBUG:
+            print(f"阶梯切割 {len(stairs)} 个: {stairs}")
+        #合并所有api
+        tmp=tmp+commons+stairs
+        tmp=sorted(self.fastUniqList(tmp))
+        print()
+        print(f"api总计 {len(tmp)} 个: {tmp}")
+        print()
+        mergeApis=self.inputApisMerge(tmp,apiList)
         mergeApisListWithTag=self.fastUniqDicList([{"url":url,"tag":"mergeApis","api":url} for url in mergeApis])
-        fuzzingList=mergeApisListWithTag
+        fuzzingList=mergeApisListWithTag.copy()
         #去重
         fuzzingList=self.fastUniqListWithTagDicc(fuzzingList)
 
@@ -2058,8 +2082,8 @@ class apiFuzz:
         # 去重
         fuzzingUrlList=self.fastUniqDicList(fuzzingUrlList)
         start = 0
-        end = 100
-        step = 100
+        end = 200
+        step = 200
         count=0
         #! 未处理多次fuzz未获得有效api的情况，会发送超大量数据包
         while start < len(fuzzingUrlList):
@@ -2143,6 +2167,8 @@ class apiFuzz:
                             print("nofuzz: 未识别到有效api")
                         else:
                             print("二次验证: 未识别到有效api")
+                if DEBUG:
+                    print(f"debugggging------apiResult----->{apiResult}")
                 return apiResult
                 # break#*不继续进行fuzz，此处未考虑多个根api情况
                 #todo 排除已发现有效api进行二次测试，确定是否存在多个根api未被发现
@@ -2200,11 +2226,18 @@ class apiFuzz:
         tmp=[x for x in tmp if x["status"]["code"] not in blackstatuscode]
         tmp=[x for x in tmp if x["status"]["size"]!=0]
         count=Counter([x["status"]["size"] for x in tmp])
-        maxer=max(count,key=count.get)
+        maxer=None
+        if count:
+            maxer=max(count,key=count.get)
+        else:
+            if DEBUG:
+                print(f"count 为空 无maxer")
         # if DEBUG:
         #     print(f"debuuuging---orgionn--maxer---->{maxer}")
         if maxer:
             if count[maxer]>=len(tmp)/2 and count[maxer]>=8:
+                if DEBUG:
+                    print(f"maxer---->{maxer}")
                 anchor={"small":maxer,"big":maxer}
                 # if DEBUG:
                 #     print(f"debuuuging---ultttt--anchor---->{anchor}")
@@ -2377,6 +2410,7 @@ class apiFuzz:
                     apidiccs["inputApis"]+=apidicc["inputApis"]
                     apidiccs["validApis"]+=apidicc["validApis"]
                     apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
+            apidiccs["validApis"]=self.fastUniqList(apidiccs["validApis"])
             #nofuzz 状态输出实现
             #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
             singlestatus["tag"]="nofuzz"
@@ -2386,7 +2420,11 @@ class apiFuzz:
             if "nofuzz" not in mode:#nofuzz实现
                 #组合有效api
                 validApis=[x["api"] for x in pulses]
-                print(f"根据指纹命中api进行结果获取: {validApis}")
+                #*使能二次验证结果
+                validApis+=apidiccs["suspiciousAPis"]+apidiccs["validApis"]
+                validApis=self.fastUniqList(validApis)
+                # print(f"根据指纹命中api进行结果获取: {validApis}")
+                print(f"根据指纹和二次验证命中api进行结果获取: {validApis}")
                 #todo 响应信息增加指纹信息
                 #todo 用户输入实施指纹识别和二次验证之后 需要修正这里的逻辑，避免二次指纹验证
                 singlestatus=self.apiFuzzForUserInputApiInAction(mode,origionUrl,validApis,apiFuzzList,anchorRespList)
@@ -2437,6 +2475,7 @@ class apiFuzz:
                             apidiccs["inputApis"]+=apidicc["inputApis"]
                             apidiccs["validApis"]+=apidicc["validApis"]
                             apidiccs["suspiciousAPis"]+=apidicc["suspiciousAPis"]
+                    apidiccs["validApis"]=self.fastUniqList(apidiccs["validApis"])
                     #nofuzz 状态输出实现
                     #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"nofuzz"}
                     singlestatus["tag"]="nofuzz"
@@ -2460,20 +2499,25 @@ class apiFuzz:
                     else:
                         singlestatus["dead"]="dead"
             cleanurl=getCleanUrl(origionUrl)
-            for i in range(len(tmpinputapipaths)):
-                if not isUrlValid(tmpinputapipaths[i]):
-                    tmpinputapipaths[i]=cleanurl+"/"+tmpinputapipaths[i].strip("/")
+            # for i in range(len(tmpinputapipaths)):
+            #     if not isUrlValid(tmpinputapipaths[i]):
+            #         tmpinputapipaths[i]=cleanurl+"/"+tmpinputapipaths[i].strip("/")
             tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
             if DEBUG:
                 print(f"待处理api {len(tmpinputapipaths)} 个:")
                 for i in tmpinputapipaths:
                     print(i)
-            mydicc={}
-            for url in tmpinputapipaths:
-                for api in apiFuzzList:
-                    #需要处理/jeecg/jeecg/sys/list 的问题 排除相同根
-                    mydicc[url.rstrip("/")+api]=None#api一定存在开始的/，不用额外处理
-            urlFuzzList=list(mydicc.keys())
+            # mydicc={}
+            # for url in tmpinputapipaths:
+            #     for api in apiFuzzList:
+            #         #需要处理/jeecg/jeecg/sys/list 的问题 排除相同根
+            #         mydicc[url.rstrip("/")+api]=None#api一定存在开始的/，不用额外处理
+            mergedfuzzlist=self.inputApisMerge(tmpinputapipaths,apiFuzzList)
+            urlFuzzList=mergedfuzzlist.copy()
+            for i in range(len(urlFuzzList)):
+                if not isUrlValid(urlFuzzList[i]):
+                    urlFuzzList[i]=cleanurl+"/"+urlFuzzList[i].strip("/")
+            # urlFuzzList=list(mydicc.keys())
             if DEBUG:
                 print(f"指定api待处理数量: {len(urlFuzzList)}")
             filename=".js_fuzz_url.txt"
@@ -2626,7 +2670,6 @@ class apiFuzz:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept-Charset": "utf-8",
             "Accept": "",
-            "X-Access-Token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE2ODY2NzEwNDIsInVzZXJuYW1lIjoiYWRtaW4ifQ.tgw2IKRcYNjWtQqPxE1WUnrC_Kw1PfJOSEITILrtpwU",
         }
         try:
             #todo 这里没有处理响应超大的情况
@@ -3253,20 +3296,59 @@ class apiFuzz:
             for api in apiList:
                 #排除/aaa/aaa和/aaa/aaa拼接的情况
                 #*不排除/aaa 和/aaa拼接的情况 ----> /sys/sys/query/list
-                foot=self.oneDirectionfootSize(rootPath,api,delimiter)
-                if not foot or len(foot.strip("/").split("/"))!=1:
+                # foot=self.oneDirectionfootSize(rootPath,api,delimiter)
+                foot=self.footSize(rootPath,api,delimiter)
+                # if not foot or len(foot.strip("/").split("/"))!=1:
+                if not foot or len(foot.strip("/"))<len(rootPath.strip("/")):
                     tmpApi=rootPath.strip("/")
                     if tmpApi!="":
-                        fullApi="/"+tmpApi+"/"+api.strip("/")
+                        if api.strip("/")!="":
+                            fullApi="/"+tmpApi+"/"+api.strip("/")
+                        else:
+                            fullApi="/"+tmpApi
                     else:
-                        fullApi="/"+api.strip("/")
+                        if api.strip("/")!="":
+                            fullApi="/"+api.strip("/")
+                        else:
+                            fullApi="/"
                     if fullApi not in tmpList:#去重
                         tmpList.append(fullApi)
                     else:
                         if DEBUG and Verbose:
                             print(f"fullApi重复: {fullApi}")
-                else:
-                    tmpList.append("/"+api.strip("/"))
+                elif len(foot.strip("/"))==len(rootPath.strip("/")):
+                    if len(foot.strip("/").split("/"))==1:
+                        tmpApi=rootPath.strip("/")
+                        if tmpApi!="":
+                            if api.strip("/")!="":
+                                fullApi="/"+tmpApi+"/"+api.strip("/")
+                            else:
+                                fullApi="/"+tmpApi
+                        else:
+                            if api.strip("/")!="":
+                                fullApi="/"+api.strip("/")
+                            else:
+                                fullApi="/"
+                        if fullApi not in tmpList:#去重
+                            tmpList.append(fullApi)
+                        if api not in tmpList:
+                            tmpList.append(api)
+                        else:
+                            if DEBUG and Verbose:
+                                print(f"fullApi重复: {fullApi}")
+                    else:
+                        if api.strip("/")!="":
+                            if "/"+api.strip("/") not in tmpList:
+                                tmpList.append("/"+api.strip("/"))
+                            else:
+                                if DEBUG and Verbose:
+                                    print(f"fullApi重复: {fullApi}")
+                        else:
+                            if "/"+api.strip("/") not in tmpList:
+                                tmpList.append("/")
+                            else:
+                                if DEBUG and Verbose:
+                                    print(f"fullApi重复: {fullApi}")
         else:
             if DEBUG:
                 print(f"命中黑名单api: {rootPath}")
