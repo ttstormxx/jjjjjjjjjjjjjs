@@ -210,7 +210,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     fuzz=apiFuzz()
     # apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
     # apiList.append(apiNoneExist)
-    cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
+    # cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
     #多重添加，防止无响应导致的错误
     for i in range(10):
         #加tag防止key值重复，导致多重添加url，但元素数量不变
@@ -1863,6 +1863,7 @@ class apiFuzz:
                 print(f"输入api未识别到有效api")
                 print()
         #优先网站配置根识别
+        #todo 将配置根作为最高优先级 忽略其他任何识别过程
         if configdomainurlroot:
             if DEBUG:
                 print(f"配置根: {configdomainurlroot}")
@@ -1958,7 +1959,8 @@ class apiFuzz:
                 #         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
                 #[{"url":url,"tag":"fingerprint","api":api}]
                 tags=[x["tag"] for x in suspiciousApi]
-                if len(tags)<=5:
+                # if len(tags)<=5:
+                if len(tags)<5:#修复常见根导致的5异常
                     print(f"指纹识别到有效api:")
                     for finger in suspiciousApi:
                         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
@@ -1974,7 +1976,7 @@ class apiFuzz:
                 if fingertags:
                     for fingertag in fingertags:
                         uniqroot=self.uniqRootImplement2([x["api"] for x in suspiciousApi if x["tag"]==fingertag])
-                        if not uniqroot or len(uniqroot)>5:
+                        if not uniqroot or len(uniqroot)>=5:
                             print(f"指纹识别到多根，判断根为 /")
                             fingerapi={"url":cleanurl+"/","tag":fingertag,"api":"/"}
                             uniqfingerApis.append(fingerapi)
@@ -2084,6 +2086,7 @@ class apiFuzz:
         # return urlNoneExistList
         #去除列表中重复的元素
         unique_list = list({tuple(sorted(d.items())): d for d in respList}.values())
+        unique_list=[x for x in unique_list if x["type"]!="json"]#去除锚点json
         if DEBUG:
             print(f"过滤后，锚点总数: {len(unique_list)} 个")
             print(unique_list)
@@ -2463,6 +2466,7 @@ class apiFuzz:
         singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
         configdomainurlroot=[]#单次结束置空
         self.standardTaskStatusOutput(mode,singlestatus)
+        
         if DEBUG:
             print(f"单fuzz:发包次数: {len(countspider)} 次")
         batchcountspider+=countspider
@@ -2486,15 +2490,18 @@ class apiFuzz:
         if DEBUG:
             print(f"批fuzz:发包次数: {len(batchcountspider)} 次")
     #单任务状态输出
-    def standardTaskStatusOutput(self,mode,singlestatus):
+    def standardTaskStatusOutput(self,mode,singlestatus,isfinal=False):
         #输出单任务状态
         #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default","dead":"alive"}
-        print()
         # print()
-        if "batch" not in mode:
-            print(f"单任务结果:")
         status=singlestatus
-        print(f"目标: {status['target']}")
+        # if "batch" not in mode:
+        if not isfinal:
+            print()
+            print(f"单任务结果:")
+            print(f"目标: {status['target']}")
+        else:
+            print(f"多任务结果:目标: {status['target']}")
         if status["dead"]=="alive":
             if not "nofuzz" in mode:
                 if status["juicyApiList"]:
@@ -2559,9 +2566,17 @@ class apiFuzz:
                         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
             # print()
             print()
+            #*增加状态码集输出
+            if "nofuzz" not in mode:
+                codes=singlestatus["codes"]
+                counter=Counter(codes)
+                # print()
+                print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
+                print()
         else:
             print(f"未发现有效api")
             print()
+        return
     #批处理任务状态输出
     def batchTaskStatusOutput(self,mode,batchTaskStatus):
         #输出批任务状态
@@ -2571,7 +2586,7 @@ class apiFuzz:
         print(f"多任务结果:")
         #todo 统一结果输出中的内容
         for singlestatus in batchTaskStatus:
-            self.standardTaskStatusOutput(mode,singlestatus)
+            self.standardTaskStatusOutput(mode,singlestatus,isfinal=True)
     #*apiFuzzInAction 加入指纹识别后 重新启用
     def apiFuzzInAction(self,mode,origionUrl,apiFuzzList,noneApis):
         """优先指纹识别，失败则进行fuzz
@@ -2844,7 +2859,10 @@ class apiFuzz:
                 #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default"}
                 #! 键值大小写让我掉泪
                 # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
-                taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
+                #*增加状态码集输出
+                codes=[res["status"]["code"] for res in fuzzResultList]
+                # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
+                taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","codes":codes,"dead":"alive"}
                 if not validApis:
                     taskStatusCount["dead"]="dead"
                 return taskStatusCount
