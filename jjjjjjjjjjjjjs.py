@@ -1307,7 +1307,6 @@ class apiFuzz:
         if DEBUG:
             print(f"api总量: {len(fuzzingList)}")
         fuzzingList=self.fastUniqListWithTagDicc(fuzzingList)
-
         # print(f"过滤去重:api总量: {len(fuzzingList)}")
         print(f"待测试:api总量: {len(fuzzingList)}")
         #排除指定api
@@ -1353,19 +1352,13 @@ class apiFuzz:
                         if "json" in res["status"]["type"]:#contenttype库实现
                             apiSpottedList.append(res)
                         elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
-                            # if DEBUG:
-                            #     print(f"debuuuuuging----{res['status']['code']}------->{res['status']['type']}----->{res['status']['size']}----->{res['api']}")
                             try:
                                 json.loads(res["resp"].text)
-                                # if DEBUG:
-                                #     print(f"debuuuging----->appending")
                                 apiSpottedList.append(res)
                             except:
                                 pass
 
             if apiSpottedList:#从这一批fuzz结果中发现
-                # if DEBUG:
-                #     print(f"debuggging------>apiSpottedList  {len(apiSpottedList)}")
                 print()
                 tags=[]
                 apis=[]#url列表
@@ -1388,33 +1381,46 @@ class apiFuzz:
                 print()
                 if "nofuzz" not in mode:
                     #*额外增加api相同的部分，/api  /api/home---->/api
-                    #* 公共前缀是为了定位长api  /api/health
-                    commonPrefixs=self.findLongestCommonPrefix(apis)
-                    if DEBUG:
-                        print(f"公共前缀 {len(commonPrefixs)} 个: {commonPrefixs}")
-                    #* 这里公共前缀是多余的，阶梯切割会覆盖公共前缀，但是那又怎么样呢o_0
-                    #阶梯切割
-                    stairs=self.stairsSplitAndStitch(apis)
-                    if DEBUG:
-                        print(f"阶梯切割 {len(stairs)} 个: {stairs}")
-                    #合并所有api
-                    apis=apis+commonPrefixs+stairs
-                    apis=sorted(self.fastUniqList(apis))
-                    print()
-                    print(f"api总计 {len(apis)} 个: {apis}")
-                    print()
+                    uniroots=self.uniqRootImplement2(apis)
+                    # tmprootapis=self.uniqRootImplement2(tmp)#有效api
+                    if len(uniroots)>5:#根为/的情况，存在超多有效api
+                        # validApis=["/"]
+                        if DEBUG:
+                            print(f"fuzz:有效根过多，判断根为 /")
+                        # singlestatus["apiFigureout"]["validApis"]=validApis
+                        apis=["/"]
+                        print()
+                        print(f"api总计 {len(apis)} 个: {apis}")
+                        print()
+                        fullUrlList=self.fastUniqList([x["url"] for x in directApiListWithTag])
+                    else:
+                        #* 公共前缀是为了定位长api  /api/health
+                        commonPrefixs=self.findLongestCommonPrefix(apis)
+                        if DEBUG:
+                            print(f"公共前缀 {len(commonPrefixs)} 个: {commonPrefixs}")
+                        #* 这里公共前缀是多余的，阶梯切割会覆盖公共前缀，但是那又怎么样呢o_0
+                        #阶梯切割
+                        stairs=self.stairsSplitAndStitch(apis)
+                        if DEBUG:
+                            print(f"阶梯切割 {len(stairs)} 个: {stairs}")
+                        #合并所有api
+                        apis=apis+commonPrefixs+stairs
+                        apis=sorted(self.fastUniqList(apis))
+                        print()
+                        print(f"api总计 {len(apis)} 个: {apis}")
+                        print()
 
-                    fullListFromTags=[x for x in fuzzingUrlList if x["tag"] in tags]
-                    if DEBUG:
-                        print(f"tag命中url: {len(fullListFromTags)} 个")
-                    #* 目前没有使用api定位tag，tag定位url的形式，直接从api定位url
-                    #[{"url":url,"tag":"completeApi","api":api}]
-                    fullListFromPath=[x for x in fuzzingUrlList if any(x["api"].startswith(api) for api in apis)]
-                    if DEBUG:
-                        print(f"api命中url: {len(fullListFromPath)} 个")
-                    fullListFromTagAndPath=fullListFromTags+fullListFromPath
-                    #
-                    fullUrlList=self.fastUniqList([x["url"] for x in fullListFromTagAndPath])
+                        fullListFromTags=[x for x in fuzzingUrlList if x["tag"] in tags]
+                        if DEBUG:
+                            print(f"tag命中url: {len(fullListFromTags)} 个")
+                        #* 目前没有使用api定位tag，tag定位url的形式，直接从api定位url
+                        #[{"url":url,"tag":"completeApi","api":api}]
+                        fullListFromPath=[x for x in fuzzingUrlList if any(x["api"].startswith(api) for api in apis)]
+                        if DEBUG:
+                            print(f"api命中url: {len(fullListFromPath)} 个")
+                        fullListFromTagAndPath=fullListFromTags+fullListFromPath
+                        #
+                        fullUrlList=self.fastUniqList([x["url"] for x in fullListFromTagAndPath])
 
                     print(f"根据api tags进行fuzz, 总数量: {len(fullUrlList)} 个")
                     if DEBUG and Verbose:
@@ -1440,6 +1446,15 @@ class apiFuzz:
                     break#*不继续进行fuzz，此处未考虑多个根api情况
                     #todo 排除已发现有效api进行二次测试，确定是否存在多个根api未被发现
                 else:
+                    uniroots=self.uniqRootImplement2(apis)
+                    # tmprootapis=self.uniqRootImplement2(tmp)#有效api
+                    if len(uniroots)>5:#根为/的情况，存在超多有效api
+                        validApis=["/"]
+                        if DEBUG:
+                            print(f"fuzz:nofuzz:有效根过多，判断根为 /")
+                        singlestatus["apiFigureout"]["validApis"]=validApis
+                        # return apiResult
+                        break
                     #*返回{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]}
                     apidicc=self.isApiValid(mode,origionUrl,apis,apiList,[],noneApiPaths,anchorRespList)
                     #nofuzz 状态输出实现
@@ -1932,13 +1947,50 @@ class apiFuzz:
             tmp=[x["api"] for x in suspiciousApi]
             uniqrootapi=self.uniqRootImplement2(tmp)
             suspiciousApi=[x for x in suspiciousApi if x["api"] in uniqrootapi]
-            if len(suspiciousApi)!=0:
+            # #*json响应识别实现
+            # apisfromjson=self.validApisFromJsonRespForFeelPulse(respList)
+            if suspiciousApi:
+                #*[{"url":url,"tag":"fingerprint","api":api}]
+                print()
+                # if DEBUG:
+                #     print(f"指纹识别到有效api:")
+                #     for finger in suspiciousApi:
+                #         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+                #[{"url":url,"tag":"fingerprint","api":api}]
+                tags=[x["tag"] for x in suspiciousApi]
+                if len(tags)<=5:
+                    print(f"指纹识别到有效api:")
+                    for finger in suspiciousApi:
+                        print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+                    return suspiciousApi
+                tag_counts=Counter(tags)
+                fingertags=self.fastUniqList(tags)
+                uniqtags=[]
+                for tag,count in tag_counts.items():
+                    if count<5:
+                        uniqtags.append(tag)
+                        fingertags.pop(fingertags.index(tag))
+                uniqfingerApis=[x for x in suspiciousApi if x["tag"] in uniqtags]
+                if fingertags:
+                    for fingertag in fingertags:
+                        uniqroot=self.uniqRootImplement2([x["api"] for x in suspiciousApi if x["tag"]==fingertag])
+                        if not uniqroot or len(uniqroot)>5:
+                            print(f"指纹识别到多根，判断根为 /")
+                            fingerapi={"url":cleanurl+"/","tag":fingertag,"api":"/"}
+                            uniqfingerApis.append(fingerapi)
+                suspiciousApi=uniqfingerApis.copy()
                 print()
                 print(f"指纹识别到有效api:")
                 for finger in suspiciousApi:
                     print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
-                #[{"url":url,"tag":"fingerprint","api":api}]
                 return suspiciousApi
+            # elif apisfromjson:
+            #     if apisfromjson["validApis"]:
+            #         api="/"+apisfromjson["validApis"][0].strip("/")
+            #         suspiciousApi.append({"url":cleanurl+api,"tag":"json","api":api})
+            #         for finger in suspiciousApi:
+            #             print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+            #         return suspiciousApi
             else:
                 start = end
                 end += step
@@ -1954,11 +2006,26 @@ class apiFuzz:
                     if loop==15:#*放开host限制后，增加上线
                         print(f"指纹识别 {loop} 次未获得有效api，自动放弃")
                         break
-        if len(suspiciousApi)==0:
-            if "nofuzz" not in mode:
-                print("指纹识别结束，未发现有效api")
+        if not suspiciousApi:
+            #*json响应识别实现
+            print()
+            print(f"指纹识别失败，转换识别")
+            lstforjson=directApiListWithTag[:100]
+            jsonlst=self.taskUsingThread(self.universalGetRespWithTagUsingRequests,mode,origionUrl,lstforjson,threads=threads)
+
+            apisfromjson=self.validApisFromJsonRespForFeelPulse(jsonlst)
+            if apisfromjson:
+                if apisfromjson["validApis"]:
+                    api="/"+apisfromjson["validApis"][0].strip("/")
+                    suspiciousApi.append({"url":cleanurl+api,"tag":"json","api":api})
+                    for finger in suspiciousApi:
+                        print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+                    return suspiciousApi
             else:
-                print("nofuzz模式:指纹识别结束，未发现有效api")
+                if "nofuzz" not in mode:
+                    print("指纹识别结束，未发现有效api")
+                else:
+                    print("nofuzz模式:指纹识别结束，未发现有效api")
         return
     #tag
     def generate_random_string(self,length):
@@ -2022,6 +2089,83 @@ class apiFuzz:
             print(unique_list)
         return unique_list
 
+    #json响应有效api识别
+    def validApisFromJsonRespForFeelPulse(self,respList,anchorRespList=[]):
+        """用于指纹识别中的判断
+        json响应判断有效api的统一实现
+
+        Args:
+            mode (_type_): _description_
+            origionUrl (_type_): _description_
+            respList (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        apiResult={"inputApis":[],"validApis":[],"suspiciousAPis":[]}
+        apiSpottedList=[]
+        if anchorRespList:
+            for res in respList:#res的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
+                #* 当前仅比较size
+                if res["status"]["code"] !=404 and not any(res["status"]["size"] == anchor["size"] for anchor in anchorRespList) and res["status"]["size"]!=0:#todo 这里有效api的size是有可能为0的
+                    # if "application/json" in res["status"]["type"]:
+                    # if "json" in res["status"]["type"]:#*修复content-type库连锁问题
+                    if "json" in res["status"]["type"]:
+                        if DEBUG:
+                            print(f"json--->sppotted--{res['status']['type']}---res['status']['code']--res['status']['size']--->")
+                            print(f"{res['resp'].text}")
+                        apiSpottedList.append(res)
+                    elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
+                        try:
+                            json.loads(res["resp"].text)
+                            apiSpottedList.append(res)
+                        except:
+                            pass
+        else:
+            for res in respList:#res的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
+                #* 当前仅比较size
+                if res["status"]["code"] !=404 and res["status"]["size"]!=0:#todo 这里有效api的size是有可能为0的
+                    # if "application/json" in res["status"]["type"]:
+                    # if "json" in res["status"]["type"]:#启用contentType库
+                    if "json" in res["status"]["type"]:
+                        apiSpottedList.append(res)
+                        # print(apiSpottedList)
+                    elif "txt" in res["status"]["type"]:#*兼容响应为txt的json数据
+                        try:
+                            json.loads(res["resp"].text)
+                            apiSpottedList.append(res)
+                        except:
+                            pass
+        if apiSpottedList:#从这一批fuzz结果中发现
+            apis=[]#url列表
+            for api in apiSpottedList:#{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag}
+                if api["api"] not in apis:#从响应中获取独立api，从独立api定位tags，从tag定位url进行fuzz
+                    apis.append(api["api"])
+            validApis=self.uniqRootImplement2(apis)#有效api
+            suspiciousApis=[]#疑似api
+            if validApis:
+                if len(validApis)>5:#根为/的情况，存在超多有效api
+                    validApis=["/"]
+                    if DEBUG:
+                        print(f"有效根过多，判断根为 /")
+                    suspiciousApis=[]#疑似api
+                else:
+                    uniques = [item for item, count in Counter(apis).items() if count == 1]
+                    uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
+                    if uniqPaths:
+                        # print("疑似api:")
+                        suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
+                        for api in suspiciousApis:
+                            if api in uniqPaths:
+                                suspiciousApis.pop(suspiciousApis.index(api))
+            else:
+                validApis=[]
+            # 输出有效api
+            # if "fuzz" not in mode:
+            if validApis:
+                apiResult={"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis}
+                return apiResult
+        return
     #二次验证实现 用于nofuzz模式实现
     def isApiValid(self,mode,origionUrl,inputApis,apiList,origionInputApis=[],noneApiPaths=[],anchorRespList=[]):
         """根据疑似api或输出的api，组合请求（少量数据包）判断是否是真实api
@@ -2029,7 +2173,17 @@ class apiFuzz:
         Args:
             apiList (_type_): _description_
         """
+        lonelyInputApis=False
+        if mode.replace("batch","").startswith("api") or len(inputApis)==1:
+            lonelyInputApis=True
+        # if DEBUG:
+        #     print(f"debuuuuging-------lonelyInputApis--->{lonelyInputApis}")
+            # nonelist=[]
+            # for i in range(10):
+            #     noneapi="/"+self.generate_random_string(8)
+            #     nonelist.append({"url":cleanUrl+noneapi,"tag":"nonenoneApi","api":noneapi})
         print()
+        apiResult={"inputApis":inputApis,"validApis":[],"suspiciousAPis":[]}
         cleanUrl=getCleanUrl(origionUrl)
         # apiList.append("/")#添加根
         # if mode.replace("batch","").startswith("fuzz"):#fuzz模式
@@ -2041,7 +2195,13 @@ class apiFuzz:
         tmp=inputApis.copy()
         commons=self.findLongestCommonPrefix(tmp)
         stairs=self.stairsSplitAndStitch(tmp)
-
+        tmprootapis=self.uniqRootImplement2(tmp)#有效api
+        if len(tmprootapis)>5:#根为/的情况，存在超多有效api
+            validApis=["/"]
+            if DEBUG:
+                print(f"有效根过多，判断根为 /")
+            apiResult["validApis"]=validApis
+            return apiResult
         if DEBUG:
             print(f"公共前缀 {len(commons)} 个: {commons}")
         #* 这里公共前缀是多余的，阶梯切割会覆盖公共前缀，但是那又怎么样呢o_0
@@ -2049,6 +2209,7 @@ class apiFuzz:
         if DEBUG:
             print(f"阶梯切割 {len(stairs)} 个: {stairs}")
         #合并所有api
+        tmp=[x if x.startswith("/") else "/"+x.strip("/") for x in tmp]
         tmp=tmp+commons+stairs
         tmp=sorted(self.fastUniqList(tmp))
         print()
@@ -2088,6 +2249,11 @@ class apiFuzz:
         #! 未处理多次fuzz未获得有效api的情况，会发送超大量数据包
         while start < len(fuzzingUrlList):
             sublist = fuzzingUrlList[start:end]
+            if lonelyInputApis:
+                nonenoneapi="/"+self.generate_random_string(8)
+                sublist.append({"url":cleanUrl+nonenoneapi,"tag":"cleanUrlApi","api":nonenoneapi})
+                if DEBUG:
+                    print(f"孤单输入:拼接锚点根")
             # print()
             if "nofuzz" in mode:
                 print(f"nofuzz:第 {count+1} 批次fuzz: 数量: {len(sublist)} 个")
@@ -2134,16 +2300,42 @@ class apiFuzz:
                     if api["api"] not in apis:#从响应中获取独立api，从独立api定位tags，从tag定位url进行fuzz
                         apis.append(api["api"])
                 validApis=self.uniqRootImplement2(apis)#有效api
-                suspiciousApis=[]#疑似api
                 if validApis:
-                    uniques = [item for item, count in Counter(apis).items() if count == 1]
-                    uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
-                    if uniqPaths:
-                        # print("疑似api:")
-                        suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
-                        for api in suspiciousApis:
-                            if api in uniqPaths:
-                                suspiciousApis.pop(suspiciousApis.index(api))
+                    if len(validApis)>5:#根为/的情况，存在超多有效api
+                        validApis=["/"]
+                        if DEBUG:
+                            print(f"有效根过多，判断根为 /")
+                        suspiciousApis=[]#疑似api
+                    else:
+                        suspiciousApis=[]#疑似api
+                        if lonelyInputApis:
+                            if nonenoneapi in apis:
+                                validApis=["/"]
+                                suspiciousApis=[]
+                            else:
+                                uniques = [item for item, count in Counter(apis).items() if count == 1]
+                                uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
+                                if uniqPaths:
+                                    # print("疑似api:")
+                                    suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
+                                    for api in suspiciousApis:
+                                        if api in uniqPaths:
+                                            suspiciousApis.pop(suspiciousApis.index(api))
+                        elif validApis!=["/"]:
+                            uniques = [item for item, count in Counter(apis).items() if count == 1]
+                            uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
+                            if uniqPaths:
+                                # print("疑似api:")
+                                suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
+                                for api in suspiciousApis:
+                                    if api in uniqPaths:
+                                        suspiciousApis.pop(suspiciousApis.index(api))
+                        else:
+                            validApis=["/"]
+                            suspiciousApis=[]
+                else:
+                    validApis=[]
+                    suspiciousApis=[]
                 # 输出有效api
                 # if "fuzz" not in mode:
                 apiResult={"inputApis":inputApis,"validApis":validApis,"suspiciousAPis":suspiciousApis}
@@ -2232,15 +2424,11 @@ class apiFuzz:
         else:
             if DEBUG:
                 print(f"count 为空 无maxer")
-        # if DEBUG:
-        #     print(f"debuuuging---orgionn--maxer---->{maxer}")
         if maxer:
             if count[maxer]>=len(tmp)/2 and count[maxer]>=8:
                 if DEBUG:
                     print(f"maxer---->{maxer}")
                 anchor={"small":maxer,"big":maxer}
-                # if DEBUG:
-                #     print(f"debuuuging---ultttt--anchor---->{anchor}")
                 return anchor
             else:
                 if DEBUG:
@@ -2502,6 +2690,7 @@ class apiFuzz:
             # for i in range(len(tmpinputapipaths)):
             #     if not isUrlValid(tmpinputapipaths[i]):
             #         tmpinputapipaths[i]=cleanurl+"/"+tmpinputapipaths[i].strip("/")
+            tmpinputapipaths=["/"+x.strip("/") for x in tmpinputapipaths]
             tmpinputapipaths=self.fastUniqList(tmpinputapipaths)
             if DEBUG:
                 print(f"待处理api {len(tmpinputapipaths)} 个:")
@@ -2579,6 +2768,8 @@ class apiFuzz:
         #     print(f"debugging threads: {threads}")
         # else:
         #     print(f"threads: {threads}")
+        if Method==self.getFuzzUrlResultUsingRequests:
+            threads=50
         print(f"threads: {threads}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
             # 向线程池提交任务
@@ -2631,15 +2822,24 @@ class apiFuzz:
                 statusCount['rightCount']=[x.replace(cleanurl,"") for x in statusCount['rightCount']]
                 validApis=statusCount['rightCount']
                 validApis=self.uniqRootImplement2(validApis)#有效api
-                suspiciousApis=[]#疑似api
-                if validApis:
-                    uniques = [item for item, count in Counter(statusCount['rightCount']).items() if count == 1]
-                    uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
-                    if uniqPaths:
-                        suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
-                        for api in suspiciousApis:
-                            if api in uniqPaths:
-                                suspiciousApis.pop(suspiciousApis.index(api))
+                # tmprootapis=self.uniqRootImplement2(tmp)#有效api
+                if len(validApis)>5:#根为/的情况，存在超多有效api
+                    # validApis=["/"]
+                    if DEBUG:
+                        print(f"fuzz:有效根过多，判断根为 /")
+                    # singlestatus["apiFigureout"]["validApis"]=validApis
+                    validApis=["/"]
+                    suspiciousApis=[]#疑似api
+                else:
+                    suspiciousApis=[]#疑似api
+                    if validApis:
+                        uniques = [item for item, count in Counter(statusCount['rightCount']).items() if count == 1]
+                        uniqPaths= self.uniqPathWithNoCommonRoot(uniques)
+                        if uniqPaths:
+                            suspiciousApis=self.stairsSplitAndStitch(uniqPaths)
+                            for api in suspiciousApis:
+                                if api in uniqPaths:
+                                    suspiciousApis.pop(suspiciousApis.index(api))
                 #任务结果统计
                 #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default"}
                 #! 键值大小写让我掉泪
@@ -2990,7 +3190,7 @@ class apiFuzz:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            # "Accept": "*/*"
+            # "Accept": "",
             "Accept-Charset": "utf-8",
         }
         try:#ele {"url":url,"tag":"completeApi","api":api}
