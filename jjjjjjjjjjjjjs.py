@@ -354,7 +354,8 @@ def locateDefaultPage(respList):
         if tmpindex:
             if tmpindex["status"]["size"]!=defaultResult["status"]["size"]:
                 defaultResult=tmpindex
-                tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["index"]]
+                # tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["index"]]
+                tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["size"]]
                 tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
                 defaultResult=tmpindexs[0]
     else:
