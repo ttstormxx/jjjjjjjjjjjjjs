@@ -29,12 +29,13 @@ commonApiList=["api","Api","system","sys","user"]#常见api根路径
 apiRootBlackList=["\\","#","$","@","*","+","-","|","!","%","^","~","[","]"]#api根黑名单，这里的值不可能出现在根API 起始值 中
 apiBlackList=["\\","#","$","@"]#api黑名单，这里的值不可能出现在URL中
 anchorUserInterface="#"#单独输出拼接#为根api的情况，用于手动浏览器访问，排序从短到长
-fileExtBlackList=["exe","apk","mp4","mkv","mp3","flv","js","css","less","woff","vue","svg","png","jpg","swf","html"]#todo url文件扩展名黑名单 是否增加html
+fileExtBlackList=["exe","apk","mp4","mkv","mp3","flv","js","css","less","woff","vue","svg","png","jpg","jpeg","tif","bmp","gif","psd","exif","fpx","avif","apng","webp","swf",",","ico","svga","html","htm"]
 urlBlackList=[" "]#URL不可能出现空格
-# juicyApiListKeyWords=["upload","download","config","conf","import","query","list","user","sys","system","adm","admin","customer"]#todo 用于在fuzz结束时，提示用户需要高度关注的api
-juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database"]#todo 用于在fuzz结束时，提示用户需要高度关注的api
+juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database"]#* 用于在fuzz结束时，提示用户需要高度关注的api
 #高危文件库
-juicyFileExtList=["xls","xlsx","doc","docx","txt",]#获取敏感接口时会与juicyApiListKeyWords合并
+#todo 文件同时从content-type和文件内容中同时识别，减少误报，但基础的后缀（即使无效）仍需要展示，由用户判断是否需要
+#todo 可以增加确定文件和疑似无效文件展示
+juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","zip","rar","7z","tar.gz","tar","gz","xz","jar","tgz"]#获取敏感接口时会与juicyApiListKeyWords合并
 #{"tag":"jwt","desc":"jwt","regex":r'7{10000}'},
 # 增加content-type tag库
 contentTypeList=[
@@ -69,7 +70,7 @@ contentTypeList=[
     # {"key":"html","tag":"html"},
 ]
 #敏感信息指纹库
-#todo 输出敏感信息匹配内容
+# 输出敏感信息匹配内容
 sensitiveInfoRegex=[#todo 待完善
     #正则偷的hae和findsomething的正则
     #https://github.com/gh0stkey/HaE
@@ -95,6 +96,8 @@ missingRegex=[
             {"regex":r'request method\s\'get\'\snot supported',"tag":"missing","desc":"method not supported"},
             {"regex":r'request method\s\'post\'\snot supported',"tag":"missing","desc":"method not supported"},
             {"regex":r'parameter.+is not present',"tag":"missing","desc":"is not present"},
+            {"regex":r'参数缺失',"tag":"missing","desc":"参数缺失"},
+            {"regex":r'非法的?参数',"tag":"missing","desc":"非法参数"},
         ]
 #todo 扩充完善指纹库
 apiFingerprintWithTag=[
@@ -106,12 +109,14 @@ apiFingerprintWithTag=[
     {"fingerprint":"{\"_links\":{\"self\":{\"href\":\"","tag":"actuator"},
     ]#稳定api响应页面swagger springboot
 
-indexKeywords=[#todo 作为用来区分首页的标志
+indexKeywords=[# 作为用来区分首页的标志
         {"regex":r'doesn\'t work properly without JavaScript enabled',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<link href="[^\<\>]*app.*\.js"',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<script src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<script src=[^\<\>]*main.*\.js>',"tag":"webpack","desc":"webpack"},
+        # {"regex":r'<link href="[^\<\>]*app.*\.js"',"tag":"webpack","desc":"webpack"},
+        # {"regex":r'<script src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
+        # {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
+        # {"regex":r'<script src=[^\<\>]*main.*\.js>',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<(script)|(link)[^\<\>]*(src)|(href)=[^\<\>]*(main)|(app)|(umi)|(index)|(login)|(chunk).*?\.js>',"tag":"webpack","desc":"webpack"},
+        {"regex":r'<link[^\<\>]*href=[^\<\>]*(favicon)|(logo).ico>',"tag":"webpack","desc":"webpack"},
     ]
 
 blackstatuscode=[502,500,403,401]#过滤敏感接口
@@ -126,7 +131,8 @@ domainblacklist=[
                 "www.w3.org", "example.com", "github.com","example.org",
             ]
 urlblacklist=[".js?", ".css?", ".jpeg?", ".jpg?", ".png?", ".gif?", "github.com", "www.w3.org", "example.com","example.org", "<", ">", "{", "}", "[", "]", "|", "^", ";", "/js/", "location.href", "javascript:void"]
-urlextblacklist=[".js",",",".css",".jpeg",".jpg",".png",".gif",".ico",".svg",".less",".svga"]
+# urlextblacklist=[".js",",",".css",".jpeg",".jpg",".png",".gif",".ico",".svg",".less",".svga"]
+urlextblacklist=["."+x if not x.startswith(",") else x for x in fileExtBlackList]
 countspider=[]#单任务统计
 batchcountspider=[]#批处理统计
 # configdomainurl=None
@@ -264,11 +270,13 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
             print()
             print(f"默认(初始)响应页面: 命中 {len(most_common_elements)} 次")
             if result["status"]['locationtimes']==0:
-                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                    # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
             else:
                 code=",".join([str(x) for x in result["status"]["locationcode"]])
                 location=" --> ".join(result["status"]["location"])
-                print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
         if diffResults:
             print()
             print(f"差异响应页面: {len(diffResults)} 个")
@@ -276,11 +284,13 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
             for result in diffResults:
                 if result["status"]["code"]!=404:
                     if result["status"]['locationtimes']==0:
-                        print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                        # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                        print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
                     else:
                         code=",".join([str(x) for x in result["status"]["locationcode"]])
                         location=" --> ".join(result["status"]["location"])
-                        print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                        # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                        print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
     else:
         halfnum=len(Results)/2
         if counter[500]>halfnum and counter[500]>8:
@@ -292,13 +302,16 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         for result in Results:
             if result["status"]["code"]!=404:
                 if result["status"]['locationtimes']==0:
-                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                    # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
                 else:
                     code=",".join([str(x) for x in result["status"]["locationcode"]])
                     location=" --> ".join(result["status"]["location"])
-                    print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                    # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                    print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
     print()
-    print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
+    # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
+    print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [502]: {counter[502]} 次")
     print()
     #todo 可能要调整位置
     #敏感信息获取展示
@@ -339,7 +352,8 @@ def locateDefaultPage(respList):
     tmpindex={}
     for resp in respList:
         for regex in indexKeywords:
-            matches=re.findall(regex["regex"],resp["resp"].text)
+            # matches=re.findall(regex["regex"],resp["resp"].text)
+            matches=re.findall(regex["regex"],resp["resp"].text.lower())
             if matches:
                 tmpindex=resp
                 break
@@ -1543,7 +1557,7 @@ class apiFuzz:
         if suspiciousFileList["url"]!="":
             return suspiciousFileList
         return
-    #todo 根据状态码进行过滤  500 401
+    # 根据状态码进行过滤  500 401
     def getSuspiciousApiFromFuzzResult(self,anchors={},fuzzResultList=[]):
         """从fuzz结果中发现可疑的响应 根据juicyApiListKeyWords 发现高可用接口
         #fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
@@ -2512,8 +2526,11 @@ class apiFuzz:
                         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
                     # if DEBUG:
-                    print()
-                    print(f"未发现敏感接口")
+                    # print()
+                    # print(f"未发现敏感接口")
+                    if DEBUG:
+                        print()
+                        print(f"未发现敏感接口")
                 #敏感文件发现
                 #返回 [{'url': 'url', 'api': 'api', 'tag': 'xlsx', 'desc': 'xlsx', 'count': 1}]
                 # suspiciousFiles=self.getSuspiciousFileFromFuzzResult(fuzzResultList)
@@ -2523,9 +2540,9 @@ class apiFuzz:
                     for info in status["sensitiveFileList"]:
                         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
-                    # if DEBUG:
-                    print()
-                    print(f"未发现敏感文件")
+                    if DEBUG:
+                        print()
+                        print(f"未发现敏感文件")
                 #可构造数据包接口展示
                 if status["possibleConstructList"]:
                     print()
@@ -2533,8 +2550,9 @@ class apiFuzz:
                     for info in status["possibleConstructList"]:
                         print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
-                    print()
-                    print(f"未发现可构造数据包接口")
+                    if DEBUG:
+                        print()
+                        print(f"未发现可构造数据包接口")
                 #敏感信息输出
                 if status["sensitivInfoList"]:
                     print()
@@ -2546,9 +2564,9 @@ class apiFuzz:
                             infomatch=" ".join([x[0] for x in info["matches"][:10]])
                             print(f"{infomatch}")
                 else:
-                    # if DEBUG:
-                    print()
-                    print("未发现敏感信息")
+                    if DEBUG:
+                        print()
+                        print("未发现敏感信息")
             #接口输出
             print()
             print("接口识别结果")
@@ -2572,8 +2590,10 @@ class apiFuzz:
                 codes=singlestatus["codes"]
                 counter=Counter(codes)
                 # print()
-                print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
+                # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
+                print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [502]: {counter[502]} 次")
                 print()
+
         else:
             print(f"未发现有效api")
             print()
