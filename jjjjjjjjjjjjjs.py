@@ -13,6 +13,7 @@ import mimetypes
 import urllib.parse
 from urllib.parse import urlparse
 import json
+import copy
 
 DEBUG=False
 Verbose=False
@@ -97,6 +98,7 @@ missingRegex=[
             {"regex":r'request method\s\'post\'\snot supported',"tag":"missing","desc":"method not supported"},
             {"regex":r'parameter.+is not present',"tag":"missing","desc":"is not present"},
             {"regex":r'参数缺失',"tag":"missing","desc":"参数缺失"},
+            {"regex":r'参数异常',"tag":"missing","desc":"参数异常"},
             {"regex":r'非法的?参数',"tag":"missing","desc":"非法参数"},
         ]
 #todo 扩充完善指纹库
@@ -106,18 +108,33 @@ apiFingerprintWithTag=[
     {"fingerprint":"<html><body><h1>Whitelabel Error Page</h1>","tag":"springboot"},#springboot
     {"fingerprint":"<title>Swagger UI</title>","tag":"swagger-ui"},
     {"fingerprint":"<title>Swagger-Bootstrap-UI</title>","tag":"Swagger-Bootstrap-UI"},
+    {"fingerprint":"<title>knife4j 接口文档</title>","tag":"knife4j 接口文档"},
     {"fingerprint":"{\"_links\":{\"self\":{\"href\":\"","tag":"actuator"},
     ]#稳定api响应页面swagger springboot
 
 indexKeywords=[# 作为用来区分首页的标志
-        {"regex":r'doesn\'t work properly without JavaScript enabled',"tag":"webpack","desc":"webpack"},
+        # {"regex":r'doesn\'t work properly without JavaScript enabled',"tag":"webpack","desc":"enabled"},
+        {"regex":r'doesn\'t work properly without javascript enabled',"tag":"webpack","desc":"javascript not fine"},
         # {"regex":r'<link href="[^\<\>]*app.*\.js"',"tag":"webpack","desc":"webpack"},
         # {"regex":r'<script src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
         # {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
         # {"regex":r'<script src=[^\<\>]*main.*\.js>',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<(script)|(link)[^\<\>]*(src)|(href)=[^\<\>]*(main)|(app)|(umi)|(index)|(login)|(chunk).*?\.js>',"tag":"webpack","desc":"webpack"},
-        {"regex":r'<link[^\<\>]*href=[^\<\>]*(favicon)|(logo).ico>',"tag":"webpack","desc":"webpack"},
+        {"regex":r'window\._config(\[\'domianurl\'\])?\s?=',"tag":"webpack","desc":"rootconfig"},
+        {"regex":r'<base[^\<\>]*(href|src)\s?=\s?\'?"?[^\<\>]*?\'?"?[^\<\>]*>',"tag":"webpack","desc":"rootconfig-base"},
+        {"regex":r'var\s+ajaxbasepath\s?=',"tag":"webpack","desc":"rootconfig-ajaxBasePath"},
+        # {"regex":r'<(script|link)[^\<\>]*(src|href)=\'?"?[^\<\>]*(main|app|umi|index|login|chunk|user|pollyfill|jquery)[^\<\>/]*?\.js\'?"?[^\<\>]*>',"tag":"webpack","desc":"js"},
+        {"regex":r'<(script|link)[^\<\>]*(src|href)\s?=\s?\'?"?[^\<\>]*(main|app|umi|webpack|login|chunk)[^\<\>/]*?\.js\'?"?[^\<\>]*>',"tag":"webpack","desc":"js"},
     ]
+indexKeywordsLowConfidence=[#以分值的方式计算总分值，取较大者为index首页
+    {"regex":r'<link[^\<\>]*href\s?=\'?"?[^\<\>]*(favicon|logo)[^\<\>/]*?\.(ico|png|jpe?g|bmp)\'?"?[^\<\>]*>',"tag":"webpack","desc":"icon","value":30},
+    {"regex":r'<title>.*</title>',"tag":"webpack","desc":"title","value":30},#可信度较低
+    {"regex":r'document\.title\s?=\s?\'?"?',"tag":"webpack","desc":"title2","value":30},#可信度较低
+    {"regex":r'<(script|link)[^\<\>]*(src|href)\s?=\s?\'?"?[^\<\>]*(pollyfill|jquery|user|index)[^\<\>/]*?\.js\'?"?[^\<\>]*>',"tag":"webpack","desc":"jquery/misc","value":60},
+    {"regex":r'location\.href\s?=\s?\'?"?',"tag":"webpack","desc":"redirection","value":-30},
+    {"regex":r'<meta[^\<\>]*http-equiv\s?=\s?\'?"?refresh\'?"?\s?content\s?=\s?\'?"?\d+;url\s?=\s?\'?"?[^\<\>]*?\'?"?[^\<\>]*>',"tag":"webpack","desc":"redirection2","value":-30},
+    #todo 增加 form登录框元素
+    #*同时计算body大小，较大者15分递增
+]
 
 blackstatuscode=[502,500,403,401]#过滤敏感接口
 
@@ -230,10 +247,21 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     threads=50
     anchorRespList=[]
     Results=fuzz.taskUsingThread(fuzz.universalGetRespWithTagUsingRequests,mode,origionUrl,urlListWithTag,anchorRespList,threads)
+    #*去除响应中多重cleanurl响应
+    cleanlist=[x for x in Results if x["tag"].startswith("cleanurl")]
+    Results=[x for x in Results if not x["tag"].startswith("cleanurl")]
+    if cleanlist:
+        Results=[x for x in Results if x["url"]!=cleanlist[0]["url"]]
+        Results.append(cleanlist[0])
+        if DEBUG:
+            print()
+            print(f"去除响应中的多重cleanurl,数量 {len(cleanlist)} 个")
+            print()
     counter=Counter([d["status"]["code"] for d in Results])#["500"]
 
     #排除404响应
     #todo 404也有可能是默认响应页面，暂不考虑
+    #todo 移除所有异常状态码 #blackstatuscode=[502,500,403,401]
     Results=[x for x in Results if x["status"]["code"]!=404]
     #标记所有初始响应
     # 从每个字典中提取size键
@@ -249,7 +277,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     #todo 分离默认页面定位、差异页面分类函数
     # counter=Counter([d["status"]["code"] for d in Results])#["500"]
     # defaultResults=[x for x in Results if x["tag"]=="cleanurl"]
-    defaultResult=locateDefaultPage(Results)
+    defaultResult=locateDefaultPage(origionUrl,Results)
     #todo 过滤0大小的响应
     #todo 默认页面识别
     # if defaultResults:
@@ -258,13 +286,19 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         # if defaultResult["status"]["code"]!=404:
         most_common_elements = sorted([d for d in Results if d['status']['size'] == defaultResult["status"]["size"]],key=lambda item:item["api"])
         halfnum=(len(Results)-len(most_common_elements))/2
-        if counter[500]>halfnum and counter[500]>8:
-            Results=[d for d in Results if d["status"]["code"]!=500]
-        if counter[403]>halfnum and counter[403]>8:
-            Results=[d for d in Results if d["status"]["code"]!=403]
-        if counter[401]>halfnum and counter[401]>8:
-            Results=[d for d in Results if d["status"]["code"]!=401]
-        diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["api"])
+        #*屏蔽过量的同类无效输出，减少干扰
+        #blackstatuscode=[502,500,403,401]
+        for code in blackstatuscode:
+            if counter[code]>halfnum and counter[code]>8:#8个为标尺
+                Results=[d for d in Results if d["status"]["code"]!=code]
+        # if counter[500]>halfnum and counter[500]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=500]
+        # if counter[403]>halfnum and counter[403]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=403]
+        # if counter[401]>halfnum and counter[401]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=401]
+        # diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["api"])
+        diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["status"]["size"],reverse=True)
         result=defaultResult
         if result["status"]["code"]!=404:
             print()
@@ -293,12 +327,18 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
                         print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
     else:
         halfnum=len(Results)/2
-        if counter[500]>halfnum and counter[500]>8:
-            Results=[d for d in Results if d["status"]["code"]!=500]
-        if counter[403]>halfnum and counter[403]>8:
-            Results=[d for d in Results if d["status"]["code"]!=403]
-        if counter[401]>halfnum and counter[401]>8:
-            Results=[d for d in Results if d["status"]["code"]!=401]
+        #*屏蔽过量的同类无效输出，减少干扰
+        #blackstatuscode=[502,500,403,401]
+        for code in blackstatuscode:
+            if counter[code]>halfnum and counter[code]>8:#8个为标尺
+                Results=[d for d in Results if d["status"]["code"]!=code]
+        # if counter[500]>halfnum and counter[500]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=500]
+        # if counter[403]>halfnum and counter[403]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=403]
+        # if counter[401]>halfnum and counter[401]>8:
+        #     Results=[d for d in Results if d["status"]["code"]!=401]
+        Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
         for result in Results:
             if result["status"]["code"]!=404:
                 if result["status"]['locationtimes']==0:
@@ -332,6 +372,10 @@ def somehowreplaceUrlfinder(url):
     mySpider=jsSpider()
     mySpider.Spider(url)#def Spider(self,url,isdeep=True):
     resultUrl = mySpider.RemoveRepeatElement(resultUrl)
+    if resultUrl and url.strip("/")+"/" not in resultUrl:
+        if DEBUG:
+            print(f"debuuuging---->appending-->origionUrl-->{url}")
+        mySpider.appendUrl(url)
     lst=resultUrl.copy()
     lst=urlExcludeJs(lst,url)
     resultUrl=[]
@@ -340,44 +384,157 @@ def somehowreplaceUrlfinder(url):
 
     return lst
 
+#分值计算定位初始页面
+def whenWeLocateIndexWeMustSmileNotCry(respList):
+    """计算匹配命中的所有页面的分值，最大值者胜出为加冕为index首页
+
+    Args:
+        origionUrl (_type_): _description_
+        respList (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    if DEBUG:
+        print(f"信心正则处理中")
+    Results=copy.deepcopy(respList)
+    # confidencePool=[]
+    tmp={}
+    sizeamountcount=0
+    for resp in Results:
+        confidencecount=0
+        confidencetag=""
+        confidencevalue=""
+        for regex in indexKeywordsLowConfidence:
+            mathes=re.findall(regex["regex"],resp["resp"].text.lower())
+            if mathes:
+                confidencecount+=regex["value"]
+                confidencetag+=","+regex["desc"]
+                confidencevalue+=","+str(regex["value"])
+        confidencetag.strip(",")
+        confidencevalue.strip(",")
+        if not tmp:
+            tmp={"object":resp,"confidencetag":confidencetag,"confidencevalue":confidencevalue,"confidencecount":confidencecount}
+        else:
+            if resp["status"]["size"]>tmp["object"]["status"]["size"]:#body大小分数15
+                sizeamountcount+=1
+                confidencecount+=sizeamountcount*15
+                confidencetag+=","+"size"
+                confidencevalue+=","+str(sizeamountcount*15)
+            if confidencecount > tmp["confidencecount"]:
+                if DEBUG:
+                    print(f"debuuuging--替换较大值--new--{resp['url']}-{confidencecount}-{confidencetag}--{confidencevalue}---old--{tmp['confidencecount']}--{tmp['object']['url']}----{tmp['confidencetag']}---{tmp['confidencevalue']}---{tmp['confidencecount']}------>")
+                tmp={"object":resp,"confidencetag":confidencetag,"confidencevalue":confidencevalue,"confidencecount":confidencecount}
+    if tmp and tmp["confidencecount"]>=30:#todo 分值需要优化
+        if DEBUG:
+            print(f"debuuuuging--信心正则定位成功--->{tmp['object']['url']}---{tmp['confidencetag']}---{tmp['confidencevalue']}---{tmp['confidencecount']}-->")
+        return tmp
+    else:
+        if DEBUG:
+            print(f"debuuuuging--信心正则定位失败--->")
+    return
+
 #识别初始页面
-def locateDefaultPage(respList):
+def locateDefaultPage(origionUrl,respList):
     """定位初始页面
+    #*webpack常见首页正则定位，如果没命中，则使用cleanurl作为首页
+    #*如果什么都没有，则不区分首页输出 sad
 
     Args:
         respList (_type_): _description_
     """
-    Results=respList.copy()
+    # Results=respList.copy()
+    Results=copy.deepcopy(respList)
 
-    tmpindex={}
-    for resp in respList:
+    tmpindex={}#正则匹配结果
+    # for resp in respList:#*正则匹配到的值为绝对首页，覆盖所有判断
+    try:
+        cleanresp=[x for x in Results if x["tag"].startswith("cleanurl")][0]
+        for regex in indexKeywords:#优先匹配cleanurl响应
+                # matches=re.findall(regex["regex"],resp["resp"].text)
+                matches=re.findall(regex["regex"],cleanresp["resp"].text.lower())
+                if matches:
+                    tmpindex=cleanresp
+                    if DEBUG:
+                        print(f"debuuuuging--index定位---{cleanresp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
+                        print(f"debuuuuuging--cleanurl命中正则----定位为首页index->{cleanresp['url']}")
+                    return tmpindex
+        if DEBUG:
+            print(f"cleanurl正则定位失败")
+    except Exception as e:
+        if DEBUG:
+            print(f"{e}")
+            print(f"cleanurl定位失败")
+    indexes=[]
+    for resp in Results:#*正则匹配到的值为绝对首页，覆盖所有判断
         for regex in indexKeywords:
             # matches=re.findall(regex["regex"],resp["resp"].text)
             matches=re.findall(regex["regex"],resp["resp"].text.lower())
+            # matches=re.match(regex["regex"],resp["resp"].text.lower())
             if matches:
-                tmpindex=resp
+                if DEBUG:
+                    print(f"debuuuuging--index定位---{resp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
+                # tmpindex=resp
+                # break
+                #*同时命中实施分值判断进行定位
+                indexes.append(resp)
                 break
-        if tmpindex:
-            break
-    try:
-        # defaultResult=[x for x in Results if x["tag"]=="cleanurl"][0]
-        defaultResult=[x for x in Results if x["tag"].startswith("cleanurl")][0]
-    except:
-        defaultResult={}
-    if defaultResult:
-        if tmpindex:
-            if tmpindex["status"]["size"]!=defaultResult["status"]["size"]:
-                defaultResult=tmpindex
-                # tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["index"]]
-                tmpindexs=[x for x in respList if x["status"]["size"]==tmpindex["status"]["size"]]
-                tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
-                defaultResult=tmpindexs[0]
+        # if tmpindex:#命中即结束
+        #     break
+    if indexes:#*竟然有存在配置根却还进行redirect的网站，导致这里多一重判断
+        if len(indexes)>1:
+            confideceIndex=whenWeLocateIndexWeMustSmileNotCry(indexes)
+            if confideceIndex:
+                tmpindex=confideceIndex["object"]
+            else:#信心正则值过小导致None
+                tmpindex=indexes[0]
+        else:
+            tmpindex=indexes[0]
+    defaultResult={}
+    if tmpindex:
+        print(f"tmpindex---->{tmpindex['url']}")
+        tmpindexs=[x for x in Results if x["status"]["size"]==tmpindex["status"]["size"]]
+        tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
+        if DEBUG:
+            print(f"debuuuuging--同大小取正则最短值为首页index---->{tmpindexs[0]['url']}")
+        if DEBUG:
+            print(f"debuuuging--首页定位结果---->{tmpindexs[0]['url']}")
+        return tmpindexs[0]#取正则最短值
     else:
-        if tmpindex:
-            defaultResult=tmpindex
-    #404处理 404也可能是默认页面
-    if defaultResult:
-        return defaultResult
+        if DEBUG:
+            print(f"debuuuuging--index正则定位失败")
+        confideceIndex=whenWeLocateIndexWeMustSmileNotCry(respList)
+        if confideceIndex:#信心正则命中
+            return confideceIndex["object"]
+        else:#绝对正则无果，信心正则无果
+            if DEBUG:
+                print(f"debuuuuging------->绝对正则无果，信心正则无果")
+            #*不应该以固定模式应对海量的场景，在正则定位失败后直接以输入url作为首页即可
+            try:
+                defaultResult=[x for x in Results if x["url"].strip("/")==origionUrl.strip("/")][0]
+                if DEBUG:
+                    print(f"定位初始输入成功，使用初始输入为首页index")
+                if DEBUG:
+                    print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
+                #todo 这里需要考虑初始输入页面存在重定向和200内部script重定向的问题
+                return defaultResult
+            except:
+                if DEBUG:
+                    print(f"未发现初始目标响应")
+            if not defaultResult:#初始输入不存在时，以cleanurl作为首页
+                try:
+                    defaultResult=[x for x in Results if x["tag"].startswith("cleanurl")][0]
+                    if DEBUG:
+                        print(f"debuuuging--无正则命中，无初始输入，cleanurl作为首页index---->{defaultResult['url']}")
+                        print(f"debuuuuging--cleanurl响应定位---->{defaultResult['url']}")
+                        print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
+                    return defaultResult
+                except:
+                    # defaultResult={}
+                    if DEBUG:
+                        print(f"debuuuuging--未发现cleanurl响应---->")
+    if DEBUG:
+        print(f"debuuuuging------>未发现首页")
     return
 
 def apiToUrlRearrange(origionUrl,apiList):
@@ -784,6 +941,8 @@ class jsSpider():
                     if isdeep:
                         self.Spider(host+root+js,False)
     def urlFind(self,res,host,scheme,path,isdeep=False):
+        # if DEBUG:
+        #     if 
         root=""
         rootregex=re.compile(r'/.*/{1}|/')
         roots=rootregex.findall(path)
@@ -3325,6 +3484,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
