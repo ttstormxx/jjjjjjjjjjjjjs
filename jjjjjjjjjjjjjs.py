@@ -256,34 +256,21 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         if DEBUG:
             print()
             print(f"去除响应中的多重cleanurl,数量 {len(cleanlist)} 个")
-            print()
     counter=Counter([d["status"]["code"] for d in Results])#["500"]
-
+    Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
+    #输出原始响应列表至文件 .js_raw_resp.txt
+    filename=".js_raw_resp.txt"
+    rawRespListIntoFile(Results,filename)
     #排除404响应
     #todo 404也有可能是默认响应页面，暂不考虑
     #todo 移除所有异常状态码 #blackstatuscode=[502,500,403,401]
     Results=[x for x in Results if x["status"]["code"]!=404]
-    #标记所有初始响应
-    # 从每个字典中提取size键
-    # sizes = [d['status']['size'] for d in Results]
-    # 使用Counter计数
-    # size_counts = Counter(sizes)
-    # 找到计数最高的元素
-    # most_common_size = size_counts.most_common(1)[0][0]
-    # print(f"最大相同值: {most_common_size}")
-    # 找到具有最多相同size键的元素
-    # if most_common_size:
     #*去除半数以上的500，403，401响应，输出命中次数
     #todo 分离默认页面定位、差异页面分类函数
-    # counter=Counter([d["status"]["code"] for d in Results])#["500"]
-    # defaultResults=[x for x in Results if x["tag"]=="cleanurl"]
     defaultResult=locateDefaultPage(origionUrl,Results)
     #todo 过滤0大小的响应
     #todo 默认页面识别
-    # if defaultResults:
     if defaultResult:
-        # defaultResult=defaultResults[0]
-        # if defaultResult["status"]["code"]!=404:
         most_common_elements = sorted([d for d in Results if d['status']['size'] == defaultResult["status"]["size"]],key=lambda item:item["api"])
         halfnum=(len(Results)-len(most_common_elements))/2
         #*屏蔽过量的同类无效输出，减少干扰
@@ -291,13 +278,6 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         for code in blackstatuscode:
             if counter[code]>halfnum and counter[code]>8:#8个为标尺
                 Results=[d for d in Results if d["status"]["code"]!=code]
-        # if counter[500]>halfnum and counter[500]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=500]
-        # if counter[403]>halfnum and counter[403]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=403]
-        # if counter[401]>halfnum and counter[401]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=401]
-        # diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["api"])
         diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["status"]["size"],reverse=True)
         result=defaultResult
         if result["status"]["code"]!=404:
@@ -332,12 +312,6 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         for code in blackstatuscode:
             if counter[code]>halfnum and counter[code]>8:#8个为标尺
                 Results=[d for d in Results if d["status"]["code"]!=code]
-        # if counter[500]>halfnum and counter[500]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=500]
-        # if counter[403]>halfnum and counter[403]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=403]
-        # if counter[401]>halfnum and counter[401]>8:
-        #     Results=[d for d in Results if d["status"]["code"]!=401]
         Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
         for result in Results:
             if result["status"]["code"]!=404:
@@ -384,6 +358,24 @@ def somehowreplaceUrlfinder(url):
 
     return lst
 
+
+def rawRespListIntoFile(respList,filename):
+    #输出原始响应列表至文件 .js_raw_resp.txt
+    resplisttobewrite=[]
+    for result in respList:
+        if result["status"]['locationtimes']==0:
+            # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+            resplisttobewrite.append(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
+        else:
+            code=",".join([str(x) for x in result["status"]["locationcode"]])
+            location=" --> ".join(result["status"]["location"])
+            # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+            resplisttobewrite.append(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+    if resplisttobewrite:
+        writeLinesIntoFile(resplisttobewrite,filename)
+        print()
+        print(f"原始响应输出到文件完毕: .js_raw_resp.txt, 总数: {len(resplisttobewrite)}")
+    return
 #分值计算定位初始页面
 def whenWeLocateIndexWeMustSmileNotCry(respList):
     """计算匹配命中的所有页面的分值，最大值者胜出为加冕为index首页
@@ -456,13 +448,16 @@ def locateDefaultPage(origionUrl,respList):
                 if matches:
                     tmpindex=cleanresp
                     if DEBUG:
+                        print()
                         print(f"debuuuuging--index定位---{cleanresp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
                         print(f"debuuuuuging--cleanurl命中正则----定位为首页index->{cleanresp['url']}")
                     return tmpindex
         if DEBUG:
+            print()
             print(f"cleanurl正则定位失败")
     except Exception as e:
         if DEBUG:
+            print()
             print(f"{e}")
             print(f"cleanurl定位失败")
     indexes=[]
@@ -719,7 +714,8 @@ def urlToFile(mode,origionUrl,filename):
         origionUrl (_type_): 初始url
         filename (_type_): 保存url
     """
-    rawFilename=".js_raw_result.txt"
+    # rawFilename=".js_raw_result.txt"
+    rawFilename=".js_raw_spider.txt"
     filename=".js_result.txt"
     urlList=getParseJsFromUrl(origionUrl)
     if not urlList:
@@ -3085,6 +3081,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
@@ -3192,6 +3196,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
@@ -3261,6 +3273,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
@@ -3331,6 +3351,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
@@ -3404,6 +3432,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
@@ -3587,6 +3623,14 @@ class apiFuzz:
                 content_size = 0
             try:#防止返回body为空或者没有title关键字，例如springboot404
                 page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
             except:
                 page_title=""
             try:
