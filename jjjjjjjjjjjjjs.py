@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import json
 import copy
 
-DEBUG=True
+DEBUG=False
 Verbose=False
 # class ErrorClass:
 #     usageTips="错误！！！使用方式：python3 jjjjjjjs.py  url|urlfile [[fuzz [noapi] [nobody|nofuzz]]|[api [nobody|nofuzz]]]\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径\nnoapi:排除输入的指定api\nnobody: 禁用输出响应body\nnofuzz: 仅获取有效api，无后续响应获取"
