@@ -1,7 +1,9 @@
+# -*- coding:utf-8 -*-
 import sys
 import os
 import re
 import requests
+import threading
 import concurrent.futures
 from tqdm import tqdm
 import string
@@ -15,15 +17,15 @@ from urllib.parse import urlparse
 import json
 import copy
 
-DEBUG=False
+DEBUG=True
 Verbose=False
-class ErrorClass:
-    usageTips="错误！！！使用方式：python3 jjjjjjjs.py  url|urlfile [[fuzz [noapi] [nobody|nofuzz]]|[api [nobody|nofuzz]]]\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径\nnoapi:排除输入的指定api\nnobody: 禁用输出响应body\nnofuzz: 仅获取有效api，无后续响应获取"
+# class ErrorClass:
+#     usageTips="错误！！！使用方式：python3 jjjjjjjs.py  url|urlfile [[fuzz [noapi] [nobody|nofuzz]]|[api [nobody|nofuzz]]]\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径\nnoapi:排除输入的指定api\nnobody: 禁用输出响应body\nnofuzz: 仅获取有效api，无后续响应获取"
 
 #移除敏感高危接口  delete remove drop update shutdown restart
 #todo 这里需要修改为在api中判断而不是在url中，域名中有可能出现列表中的值
 #todo 识别非webpack站点，仅输出js信息 输出匹配敏感信息?
-dangerApiList=["del","delete","insert","logout","remove","drop","shutdown","stop","poweroff","restart","rewrite"]
+dangerApiList=["del","delete","insert","logout","remove","drop","shutdown","stop","poweroff","restart","rewrite","terminate","deactivate","halt","disable"]
 apiWhiteList=["model"]#恢复命中危险端口的del中的model
 commonApiList=["api","Api","system","sys","user"]#常见api根路径
 # 完善黑名单功能
@@ -32,11 +34,11 @@ apiBlackList=["\\","#","$","@"]#api黑名单，这里的值不可能出现在URL
 anchorUserInterface="#"#单独输出拼接#为根api的情况，用于手动浏览器访问，排序从短到长
 fileExtBlackList=["exe","apk","mp4","mkv","mp3","flv","js","css","less","woff","vue","svg","png","jpg","jpeg","tif","bmp","gif","psd","exif","fpx","avif","apng","webp","swf",",","ico","svga","html","htm"]
 urlBlackList=[" "]#URL不可能出现空格
-juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database"]#* 用于在fuzz结束时，提示用户需要高度关注的api
+juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database","edit","manage"]#* 用于在fuzz结束时，提示用户需要高度关注的api
 #高危文件库
 #todo 文件同时从content-type和文件内容中同时识别，减少误报，但基础的后缀（即使无效）仍需要展示，由用户判断是否需要
 #todo 可以增加确定文件和疑似无效文件展示
-juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","zip","rar","7z","tar.gz","tar","gz","xz","jar","tgz"]#获取敏感接口时会与juicyApiListKeyWords合并
+juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","zip","rar","7z","tar.gz","tar","gz","xz","jar","tgz","json"]#获取敏感接口时会与juicyApiListKeyWords合并
 #{"tag":"jwt","desc":"jwt","regex":r'7{10000}'},
 # 增加content-type tag库
 contentTypeList=[
@@ -136,8 +138,32 @@ indexKeywordsLowConfidence=[#以分值的方式计算总分值，取较大者为
     #*同时计算body大小，较大者15分递增
 ]
 
-blackstatuscode=[502,500,403,401]#过滤敏感接口
+blackstatuscode=[502,500,403,401,404]#过滤敏感接口
+bypassstatuscode=[#todo 目前仅针对500响应进行绕过
+    500,
+    #403,
+    #401,
+]#bypass目标标记状态码
+blackstatuscodeforbypasscompare=[
+    500,
+    403,
+    401,
+    404,
+]#bypass对照响应获取后状态码过滤
+logoutKeywordList=[#退出登录接口关键词库
+    #todo 可以参考其他爬虫关键词
+    "logout",
+    "logoff",
+    "signout",
+    "checkout",
+    "exit",
+    "quit",
+    "leave",
+]
 
+bypassTechList=[#绕过tech库
+        ";",
+    ]
 
 #爬取实现
 resultJs=[]
@@ -243,8 +269,10 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
         ele["url"]=cleanurl+ele["url"]
         urlListWithTag.append(ele)
     #anchor
-    # threads=50
-    threads=50
+    if threadsConf:
+        threads=threadsConf
+    else:
+        threads=50#*响应获取阶段高线程可能会导致响应获取失败，50比较合适
     anchorRespList=[]
     Results=fuzz.taskUsingThread(fuzz.universalGetRespWithTagUsingRequests,mode,origionUrl,urlListWithTag,anchorRespList,threads)
     #*去除响应中多重cleanurl响应
@@ -447,16 +475,16 @@ def locateDefaultPage(origionUrl,respList):
                 matches=re.findall(regex["regex"],cleanresp["resp"].text.lower())
                 if matches:
                     tmpindex=cleanresp
-                    if DEBUG:
+                    if DEBUG and Verbose:
                         print()
                         print(f"debuuuuging--index定位---{cleanresp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
                         print(f"debuuuuuging--cleanurl命中正则----定位为首页index->{cleanresp['url']}")
                     return tmpindex
-        if DEBUG:
+        if DEBUG and Verbose:
             print()
             print(f"cleanurl正则定位失败")
     except Exception as e:
-        if DEBUG:
+        if DEBUG and Verbose:
             print()
             print(f"{e}")
             print(f"cleanurl定位失败")
@@ -467,7 +495,7 @@ def locateDefaultPage(origionUrl,respList):
             matches=re.findall(regex["regex"],resp["resp"].text.lower())
             # matches=re.match(regex["regex"],resp["resp"].text.lower())
             if matches:
-                if DEBUG:
+                if DEBUG and Verbose:
                     print(f"debuuuuging--index定位---{resp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
                 # tmpindex=resp
                 # break
@@ -487,48 +515,49 @@ def locateDefaultPage(origionUrl,respList):
             tmpindex=indexes[0]
     defaultResult={}
     if tmpindex:
-        print(f"tmpindex---->{tmpindex['url']}")
+        if DEBUG and Verbose:
+            print(f"tmpindex---->{tmpindex['url']}")
         tmpindexs=[x for x in Results if x["status"]["size"]==tmpindex["status"]["size"]]
         tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
-        if DEBUG:
+        if DEBUG and Verbose:
             print(f"debuuuuging--同大小取正则最短值为首页index---->{tmpindexs[0]['url']}")
-        if DEBUG:
+        if DEBUG and Verbose:
             print(f"debuuuging--首页定位结果---->{tmpindexs[0]['url']}")
         return tmpindexs[0]#取正则最短值
     else:
-        if DEBUG:
+        if DEBUG and Verbose:
             print(f"debuuuuging--index正则定位失败")
         confideceIndex=whenWeLocateIndexWeMustSmileNotCry(respList)
         if confideceIndex:#信心正则命中
             return confideceIndex["object"]
         else:#绝对正则无果，信心正则无果
-            if DEBUG:
+            if DEBUG and Verbose:
                 print(f"debuuuuging------->绝对正则无果，信心正则无果")
             #*不应该以固定模式应对海量的场景，在正则定位失败后直接以输入url作为首页即可
             try:
                 defaultResult=[x for x in Results if x["url"].strip("/")==origionUrl.strip("/")][0]
-                if DEBUG:
+                if DEBUG and Verbose:
                     print(f"定位初始输入成功，使用初始输入为首页index")
-                if DEBUG:
+                if DEBUG and Verbose:
                     print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
                 #todo 这里需要考虑初始输入页面存在重定向和200内部script重定向的问题
                 return defaultResult
             except:
-                if DEBUG:
+                if DEBUG and Verbose:
                     print(f"未发现初始目标响应")
             if not defaultResult:#初始输入不存在时，以cleanurl作为首页
                 try:
                     defaultResult=[x for x in Results if x["tag"].startswith("cleanurl")][0]
-                    if DEBUG:
+                    if DEBUG and Verbose:
                         print(f"debuuuging--无正则命中，无初始输入，cleanurl作为首页index---->{defaultResult['url']}")
                         print(f"debuuuuging--cleanurl响应定位---->{defaultResult['url']}")
                         print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
                     return defaultResult
                 except:
                     # defaultResult={}
-                    if DEBUG:
+                    if DEBUG and Verbose:
                         print(f"debuuuuging--未发现cleanurl响应---->")
-    if DEBUG:
+    if DEBUG and Verbose:
         print(f"debuuuuging------>未发现首页")
     return
 
@@ -591,6 +620,7 @@ def urlToInterface(origionUrl,urlList,interfaceDicc):
     else:
         return
 
+#移除危险接口
 def removeDangerousApi(urlList):
     """移除url列表中包含危险关键字的url
     del delete remove drop update shutdown restart
@@ -600,7 +630,7 @@ def removeDangerousApi(urlList):
     """
     cleanUrlList=[url for url in urlList if not any(api in url.lower() for api in dangerApiList)]
     # dangerUrlList=[url for url in urlList if any(api in url.lower() for api in dangerApiList)]
-    dangerUrlList=[url for url in urlList if any(api in url.lower().replace("model","") for api in dangerApiList)]
+    dangerUrlList=[url for url in urlList if any(api in url.lower().replace("model"," ") for api in dangerApiList)]
     filename=".js_dangerous.txt"
     if len(dangerUrlList)!=0:
         writeLinesIntoFile(dangerUrlList,filename)
@@ -614,6 +644,18 @@ def removeDangerousApi(urlList):
                         print(dangerUrlList[i])
     else:
         print(f"未发现危险接口")
+    return cleanUrlList
+
+#移除退出登录接口
+def removeLogoutApi(urlList):
+    """移除url列表中包含退出登录关键字的url
+    #*专用于cookie和header模式
+    del delete remove drop update shutdown restart
+
+    Args:
+        urlList (_type_): _description_
+    """
+    cleanUrlList=[url for url in urlList if not any(api in url.lower() for api in logoutKeywordList)]
     return cleanUrlList
 
 def getParseJsFromUrl(origionUrl):
@@ -728,14 +770,18 @@ def urlToFile(mode,origionUrl,filename):
     writeLinesIntoFile(urlList,rawFilename)
 
     print()
-    if DEBUG:
-        print(f"移除危险接口: {dangerApiList}")
+    if isDangerRemove:
+        if DEBUG:
+            print(f"移除危险接口: {dangerApiList}")
+        else:
+            print(f"移除危险接口")
+        urlListRemovedDangerous=removeDangerousApi(urlList)
     else:
-        print(f"移除危险接口")
-    urlListRemovedDangerous=removeDangerousApi(urlList)
+        print(f"用户禁用移除危险接口")
+        urlListRemovedDangerous=removeLogoutApi(urlList)
     # writeLinesIntoFile(removeDangerousApi(urlList),filename=filename)
     writeLinesIntoFile(urlListRemovedDangerous,filename=filename)
-    print()
+    # print()
     #输出接口字典到文件
     print()
     interfaceDicc=".js.txt"
@@ -788,8 +834,12 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
         # sys.exit("爬取结果为空")
         print("爬取结果为空")
         return
-    #去除危险接口
-    urlList=removeDangerousApi(urlList)
+    if isDangerRemove:
+        #去除危险接口
+        urlList=removeDangerousApi(urlList)
+    else:
+        print(f"用户禁用移除危险接口")
+        urlList=removeLogoutApi(urlList)
     #获取接口
     apiList=getApiFromUrlList(origionUrl,urlList)
     myFuzz=apiFuzz()
@@ -866,10 +916,36 @@ class jsSpider():
             "User-Agent": ua,
             "Accept": "",
         }
+        if headersConf:#headers
+            headers.update(headersConf)
+        if cookieConf:
+            headers.update({"Cookie":cookieConf})
+        # if DEBUG and isdeep:
+        #     print(f"headers: {headers}")
         try:
             resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
+        except requests.exceptions.Timeout as e:
+            print(f"TIMEOUT: {url}")
+            return
+        except requests.exceptions.ConnectionError as e:
+            try:
+                if "Connection reset by peer" in e:
+                    print(f"Connection reset: {url}")
+                    # raise ValueError(f"Connection reset: {url}")
+                else:
+                    print(f"Connection error occurred: {url}")
+                    # raise ValueError(f"Connection error occurred: {url}")
+            except:
+                print(f"Connection error occurred: {url}")
+                # raise ValueError(f"Connection error occurred: {url}")
+            return
+        except requests.exceptions.RequestException as e:
+            print(f"其他连接错误: {url}")
+            # raise ValueError(f"其他连接错误: {url}")
+            return
         except Exception as e:
             print(f"请求出错, {e}")
+            # raise ValueError(f"请求出错, {e}")
             return
         respurl = resp.request.url
         parsed_url=urlparse(respurl)
@@ -1503,7 +1579,10 @@ class apiFuzz:
             print()
             print(f"第 {count+1} 批次fuzz: 数量: {len(sublist)} 个")
             respList=[]
-            threads=200
+            if threadsConf:
+                threads=threadsConf
+            else:
+                threads=100
             #todo 目前发现api必须在所有线程结束后才能匹配，需要即时匹配或者减少间隔
             #sublist[{"url":url,"tag":"completeApi","api":api}]
 
@@ -1693,6 +1772,7 @@ class apiFuzz:
             if info:
                 suspiciousFileList.append(info)
         if suspiciousFileList:
+            suspiciousFileList=sorted([d for d in suspiciousFileList],key=lambda item:item["size"],reverse=True)
             return suspiciousFileList
         return
     def getSuspiciousFileFromRespdicc(self,respdicc):
@@ -1727,7 +1807,8 @@ class apiFuzz:
         #合并juicyFileExtList
         juicykeywords=juicyApiListKeyWords.copy()
         juicykeywords+=juicyFileExtList
-        tmp=fuzzResultList.copy()
+        # tmp=fuzzResultList.copy()
+        tmp=copy.deepcopy(fuzzResultList)
         #if key in respdicc["api"].lower() and respdicc["status"]["size"] !=0 and respdicc["status"]["code"] not in blackstatuscode  and respdicc["status"]["size"] !=anchors["small"]:
         tmp=[x for x in tmp if x["status"]["size"] !=0 and x["status"]["code"] not in blackstatuscode and x["status"]["type"] !="html"]
         tmp=[x for x in tmp if any(api in x["api"].lower() for api in juicykeywords)]
@@ -1767,6 +1848,7 @@ class apiFuzz:
             if list(info.keys()):
                 apiList.append(info)
         if apiList:
+            apiList=sorted([d for d in apiList],key=lambda item:item["size"],reverse=True)
             return apiList
         return
     def getSuspiciousApiFromApiList(self,origionurl,ApiList):
@@ -1813,6 +1895,7 @@ class apiFuzz:
                     continue
                 infolist.append(info)
         if infolist:
+            infolist=sorted([d for d in infolist],key=lambda item:item["size"],reverse=True)
             return infolist
         return
     def getWonderfulInfoFromSingleResult(self,respdicc):
@@ -1864,6 +1947,7 @@ class apiFuzz:
                         constructs.append(tmp)
                         continue
         if constructs:
+            constructs=sorted([d for d in constructs],key=lambda item:item["size"],reverse=True)
             return constructs
         return
     #敏感信息、文件、接口获取和展示
@@ -1885,7 +1969,8 @@ class apiFuzz:
             print()
             print(f"发现敏感接口如下(不包含危险接口): {len(infoApi)} 个")
             for info in infoApi:
-                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
             if DEBUG:
                 print()
@@ -1897,7 +1982,8 @@ class apiFuzz:
             print()
             print(f"发现疑似敏感文件如下: {len(infoFile)} 个")
             for info in infoFile:
-                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
             if DEBUG:
                 print()
@@ -1907,7 +1993,8 @@ class apiFuzz:
             print()
             print(f"发现疑似可构造数据包接口如下: {len(infoConstruct)} 个")
             for info in infoConstruct:
-                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
         else:
             if DEBUG:
                 print()
@@ -1917,7 +2004,8 @@ class apiFuzz:
             print()
             print(f"敏感信息发现如下: {len(infoInfo)} 个")
             for info in infoInfo:
-                print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 # print(" ".join(info["matches"]))
                 if info["tag"]!="username" and info["tag"]!="password":
                     infomatch=" ".join([x[0] for x in info["matches"][:10]])
@@ -1934,6 +2022,210 @@ class apiFuzz:
             respstatus (_type_): _description_
         """
         pass
+
+    # def getBypassListWithTagWithTechAndPos(self,origionUrl,preBypassApiListWithTag,techs=None,pos=None,delimiter="/"):
+    def getBypassListWithTagWithTechAndPos(self,origionUrl,preBypassApiListWithTag,technique=[],delimiter="/"):
+        #technique=[{"tech":"tech","pos":0}]
+        #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
+        cleanurl=getCleanUrl(origionUrl)
+        tmp=[]
+        dup=[]
+        pos=None
+        # if not techs:
+        if not technique:
+            techs=bypassTechList
+            for tech in techs:
+                for res in preBypassApiListWithTag:
+                    lst=res["api"].strip(delimiter).split(delimiter)
+                    for i in range(len(lst)):
+                        dup=lst.copy()
+                        dup.insert(i,tech)
+                        bypassapi=delimiter+delimiter.join(dup)
+                        tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":i,"bypassapi":bypassapi,"api":res["api"]}
+                        tmp.append(tmpdicc)
+        else:
+            for _ in technique:
+                tech=_["tech"]
+                pos=_["pos"]
+                for res in preBypassApiListWithTag:
+                    lst=res["api"].strip(delimiter).split(delimiter)
+                    if not isinstance(pos,int):
+                        for i in range(len(lst)):
+                            dup=lst.copy()
+                            dup.insert(i,tech)
+                            bypassapi=delimiter+delimiter.join(dup)
+                            tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":i,"bypassapi":bypassapi,"api":res["api"]}
+                            tmp.append(tmpdicc)
+                    else:
+                        try:
+                            dup=lst.copy()
+                            dup.insert(pos,tech)
+                            bypassapi=delimiter+delimiter.join(dup)
+                            tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":pos,"bypassapi":bypassapi,"api":res["api"]}
+                            tmp.append(tmpdicc)
+                        except Exception as e:
+                            print(f"{e}")
+        if tmp:
+            return tmp
+        return
+
+    # def bypassAuthSpear(self,origionUrl,fuzzResultList,indexres):
+    def bypassAuthSpear(self,origionUrl,fuzzResultList):
+        """实施常见bypass认证策略尝试进行bypass
+        #* fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
+        #返回 [{"prebypass":{"url": "url", "api": "api", "tag": "prebypass", "desc": "prebypass","code":"code","size":"size","type":"","count": 1},"bypassed":{"url": "url", "api": "api", "tag": "bypassed", "desc": "bypassed","tech":";","pos":"0|1|2|3|4","code":"code","size":"size","type":"","count": 1}}]
+        #返回 [{"tech":";","pos":"0|1|2|3|4"}]
+        tech: bypass 关键字
+        pos: 关键字插入位置
+
+        indexres: index首页定位
+        Args:
+            fuzzResultList (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        print()
+        print("Bypass in action")
+        bypasstarget=[x for x in fuzzResultList if x["status"]["code"] in bypassstatuscode]
+        if not bypasstarget:
+            print(f"无需要bypass的目标")
+            return
+        preBypassApiListWithTag=[{"url":resp["url"],"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":resp["api"]} for resp in bypasstarget]
+        #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
+        preBypassApiListWithTag=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
+        if not preBypassApiListWithTag:
+            print(f"bypass待测列表无效")
+            return
+        #循环bypass测试
+        start = 0
+        end = 100
+        step=100
+        loop=0
+        count=0
+        validBypassTech=[]
+        while start < len(preBypassApiListWithTag):
+            sublist = preBypassApiListWithTag[start:end]
+            # print()
+            print(f"第 {count+1} 批次Bypass: 数量: {len(sublist)} 个")
+            respList=[]
+            if threadsConf:
+                threads=threadsConf
+            else:
+                threads=100
+            #请求
+            #* bypass 不实施cookie、header
+            origionUrl=""
+            self.taskUsingThread(self.bypassSpecialGetRespWithTagUsingRequests,modeConf,origionUrl,sublist,respList,threads)
+            #ele {"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
+            #列表形式
+            #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","api":"api"}]
+            if DEBUG:
+                print(f"response count: {len(respList)}")
+            compareList=[x for x in bypasstarget if x["api"] in [y["api"] for y in sublist]]
+            for compare in compareList:
+                #校对类别 code  size  json  排除index首页大小
+                bypasstests=[x for x in respList if x["api"]==compare["api"]]
+                if bypasstests:
+                    bypasstest=bypasstests[0]
+                else:
+                    continue
+                if bypasstest["status"]["code"] not in blackstatuscodeforbypasscompare:
+                    # if bypasstest["status"]["size"]!=indexres["status"]["size"]:
+                    #     if bypasstest["status"]["size"]!=compare["status"]["size"]:
+                    #         if bypasstest["status"]["type"]=="json":
+                    #             bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"]}
+                    #             if DEBUG:
+                    #                 print()
+                    #                 print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type:{bypasstest['status']['type']} tech: {bypasstest['tech']} pos: {bypasstest['pos']}")
+                    #                 print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
+                    #                 # print(f"bypass成功: old: compare: {compare}")
+                    #                 print()
+                    #             validBypassTech.append(bypasser)
+                    if bypasstest["status"]["type"]!="html":
+                        if bypasstest["status"]["size"]!=compare["status"]["size"]:
+                            bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"]}
+                            # if DEBUG:
+                            #     print()
+                            #     print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
+                            #     print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
+                            #     # print(f"bypass成功: old: compare: {compare}")
+                            #     print()
+                            print()
+                            print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
+                            print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
+                            # print(f"bypass成功: old: compare: {compare}")
+                            # print()
+                            validBypassTech.append(bypasser)
+            print()
+            start = end
+            end += step
+            count+=1
+            loop+=1
+            if loop==5:#无论是否命中bypass tech 都跑5次
+                break
+        if validBypassTech:
+            validBypassTech=self.fastUniqDicList(validBypassTech)
+            # if DEBUG:
+            # print()
+            print(f"定位到可用bypass tech")
+            for _ in validBypassTech:
+                print(f"tech: '{_['tech']}' pos: {_['pos']}")
+            return validBypassTech
+        else:
+            # if DEBUG:
+            print(f"未发现有效bypass tech")
+        return
+
+    #废弃
+    def indexFinderForBypass(self,origionUrl,apiList):
+        """移除httpx调用
+
+        Args:
+            urlList (_type_): _description_
+        """
+        cleanurl=getCleanUrl(origionUrl)
+        apiList=[{"url":api,"tag":"httpx","api":api} for api in apiList]
+        # urlListWithTag=[cleanurl+ele["url"] for ele in apiList]
+        urlListWithTag=[]
+        # apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
+        # apiList.append(apiNoneExist)
+        # cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
+        #多重添加，防止无响应导致的错误
+        for i in range(10):
+            #加tag防止key值重复，导致多重添加url，但元素数量不变
+            tag=self.generate_random_string(3)
+            apiList.append({"url":"/","tag":f"cleanurl-{tag}","api":"/"})
+        for ele in apiList:
+            ele["url"]=cleanurl+ele["url"]
+            urlListWithTag.append(ele)
+        #anchor
+        if threadsConf:
+            threads=threadsConf
+        else:
+            threads=50#*响应获取阶段高线程可能会导致响应获取失败，50比较合适
+        anchorRespList=[]
+        Results=self.taskUsingThread(self.universalGetRespWithTagUsingRequests,modeConf,origionUrl,urlListWithTag,anchorRespList,threads)
+        #*去除响应中多重cleanurl响应
+        cleanlist=[x for x in Results if x["tag"].startswith("cleanurl")]
+        Results=[x for x in Results if not x["tag"].startswith("cleanurl")]
+        if cleanlist:
+            Results=[x for x in Results if x["url"]!=cleanlist[0]["url"]]
+            Results.append(cleanlist[0])
+            if DEBUG:
+                print()
+                print(f"去除响应中的多重cleanurl,数量 {len(cleanlist)} 个")
+        Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
+        #排除404响应
+        #todo 404也有可能是默认响应页面，暂不考虑
+        #todo 移除所有异常状态码 #blackstatuscode=[502,500,403,401]
+        Results=[x for x in Results if x["status"]["code"]!=404]
+        #*去除半数以上的500，403，401响应，输出命中次数
+        #todo 分离默认页面定位、差异页面分类函数
+        defaultResult=locateDefaultPage(origionUrl,Results)
+        if defaultResult:
+            return defaultResult
+        return
 
     #用户输入识别
     def feelUserInputApiPulse(self,mode,origionUrl,inputApis):
@@ -2099,7 +2391,11 @@ class apiFuzz:
             else:
                 print(f"第 {count+1} 批次指纹探测: 数量: {len(sublist)} 个")
             respList=[]
-            threads=100
+            # threads=100
+            if threadsConf:
+                threads=threadsConf
+            else:
+                threads=100
             #请求
             # mode=""
             self.taskUsingThread(self.getRespWithTagUsingRequestsWithHeaders,mode,origionUrl,sublist,respList,threads)
@@ -2433,7 +2729,10 @@ class apiFuzz:
             else:
                 print(f"二次验证:第 {count+1} 批次fuzz: 数量: {len(sublist)} 个")
             respList=[]
-            threads=100
+            if threadsConf:
+                threads=threadsConf
+            else:
+                threads=100
             #sublist[{"url":url,"tag":"completeApi","api":api}]
 
             self.taskUsingThread(self.getRespWithTagUsingRequests,mode,origionUrl,sublist,respList,threads)
@@ -2532,7 +2831,7 @@ class apiFuzz:
                             print("nofuzz: 未识别到有效api")
                         else:
                             print("二次验证: 未识别到有效api")
-                if DEBUG:
+                if DEBUG and Verbose:
                     print(f"debugggging------apiResult----->{apiResult}")
                 return apiResult
                 # break#*不继续进行fuzz，此处未考虑多个根api情况
@@ -2605,6 +2904,7 @@ class apiFuzz:
                 return anchor
             else:
                 if DEBUG:
+                    print()
                     print(f"maxer未超过半数或未超过8个，不作为过滤点")
         return
 
@@ -2629,8 +2929,12 @@ class apiFuzz:
             # sys.exit("爬取结果为空")
             print("爬取结果为空")
             return
-        #去除危险接口
-        urlList=removeDangerousApi(urlList)
+        if isDangerRemove:
+            #去除危险接口
+            urlList=removeDangerousApi(urlList)
+        else:
+            print(f"用户禁用移除危险接口")
+            removeLogoutApi(urlList)
         apiList=getApiFromUrlList(origionUrl,urlList)
         myFuzz=apiFuzz()
         singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
@@ -2678,7 +2982,7 @@ class apiFuzz:
                     print()
                     print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
                     for info in status["juicyApiList"]:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
                     # if DEBUG:
                     # print()
@@ -2693,7 +2997,8 @@ class apiFuzz:
                     print()
                     print(f"发现疑似敏感文件如下: {len(status['sensitiveFileList'])} 个")
                     for info in status["sensitiveFileList"]:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
                     if DEBUG:
                         print()
@@ -2703,7 +3008,8 @@ class apiFuzz:
                     print()
                     print(f"发现疑似可构造数据包接口如下: {len(status['possibleConstructList'])} 个")
                     for info in status["possibleConstructList"]:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
                     if DEBUG:
                         print()
@@ -2713,7 +3019,8 @@ class apiFuzz:
                     print()
                     print(f"敏感信息发现如下: {len(status['sensitivInfoList'])} 个")
                     for info in status["sensitivInfoList"]:
-                        print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
+                        print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                         # print(" ".join(info["matches"]))
                         if info["tag"]!="username" and info["tag"]!="password":
                             infomatch=" ".join([x[0] for x in info["matches"][:10]])
@@ -2738,6 +3045,12 @@ class apiFuzz:
             if status["fingerprint"]:
                 for finger in status["fingerprint"]:
                         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
+            #*bypass输出
+            if status["bypasser"]:
+                print()
+                print(f"定位到可用bypass tech")
+                for _ in status["bypasser"]:
+                    print(f"tech: '{_['tech']}' pos: {_['pos']}")
             # print()
             print()
             #*增加状态码集输出
@@ -2820,7 +3133,7 @@ class apiFuzz:
         return singlestatus
     #用户输入
     #todo 用户输入 实施二次验证有效api 不打算实施但需要实施？以免输入为疑似api的情况
-    def apiFuzzForUserInputApiInAction(self,mode,origionUrl,apiPaths,apiFuzzList,anchorRespList=[],threads=200):
+    def apiFuzzForUserInputApiInAction(self,mode,origionUrl,apiPaths,apiFuzzList,anchorRespList=[],threads=100):
         """根据生成的api接口列表调用httpx进行请求
 
         Args:
@@ -2905,7 +3218,9 @@ class apiFuzz:
             if DEBUG:
                 print(f"fuzz目标总数: {len(urlFuzzList)}")
             #todo 测试中 大量的访问会导致后续访问全部timeout
-            singlestatus=self.taskUsingThread(self.getFuzzUrlResultUsingRequests,mode,origionUrl,urlFuzzList,anchorRespList,threads)
+            if threadsConf:
+                threads=threadsConf
+            singlestatus=self.taskUsingThread(self.getFuzzUrlResultUsingRequests,mode,origionUrl,urlFuzzList,anchorRespList,threads,[],apiFuzzList)
             try:
                 if valid:
                     singlestatus["apiFigureout"]=valid
@@ -2950,7 +3265,7 @@ class apiFuzz:
                     singlestatus["dead"]="dead"
         return singlestatus
     #多线程任务发布
-    def taskUsingThread(self,Method,mode,origionUrl,apiFuzzList,anchorRespList=[],threads=10,taskStatusCount=[]):
+    def taskUsingThread(self,Method,mode,origionUrl,apiFuzzList,anchorRespList=[],threads=10,taskStatusCount=[],oriApiList=[]):
         #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default","dead":"alive"}
         # 创建线程池对象
         print("Fuzzing in action")
@@ -2960,7 +3275,10 @@ class apiFuzz:
         # else:
         #     print(f"threads: {threads}")
         if Method==self.getFuzzUrlResultUsingRequests:
-            threads=50
+            if threadsConf:
+                threads=threadsConf
+            else:
+                threads=50#*响应获取阶段高线程可能会导致响应获取失败，50比较合适
         print(f"threads: {threads}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
             # 向线程池提交任务
@@ -2996,7 +3314,67 @@ class apiFuzz:
             if Method==self.getFuzzUrlResultUsingRequests:
                 #* 其他Method也有可能传入apiList为字典，只能在这里判断敏感端口
                 #敏感端口发现 从fuzzResultList
+                #* fuzzResultList的值{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title},"resp":resp,"tag":tag,"api":api}
                 #返回[{"url": "url", "api": "api", "tag": "upload", "desc": "upload","code":"code","size":"size","count": 1}]
+                #*增加状态码集输出
+                codesori=[res["status"]["code"] for res in fuzzResultList]
+                #*实施bypass模式
+                if isBypassOn:
+                    print()
+                    # print("首页定位 in action")
+                    # indexres=self.indexFinderForBypass(origionUrl,oriApiList)
+                    # bypasser=self.bypassAuthSpear(origionUrl,fuzzResultList,indexres)
+                    bypasser=self.bypassAuthSpear(origionUrl,fuzzResultList)
+                    if bypasser:
+                        # print()
+                        # print(f"定位到可用bypass tech")
+                        # for _ in bypasser:
+                        #     print(f"tech: {_['tech']} pos: {_['pos']}")
+                        _=[x for x in fuzzResultList if x["status"]["code"] in bypassstatuscode]
+                        preBypassApiListWithTagToGetResponse=[{"url":resp["url"],"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":resp["api"]} for resp in _]
+                        #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
+                        preBypassApiListWithTagToGetResponse=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTagToGetResponse,bypasser)
+                        print()
+                        print(f"根据bypass tech获取响应")
+                        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
+                        # bypassResults=self.taskUsingThread(self.universalGetRespWithTagUsingRequests,mode,origionUrl,preBypassApiListWithTagToGetResponse)
+                        bypassResults=[]
+                        # self.taskUsingThread(self.postBypassSpecialGetRespWithTagUsingRequests,mode,origionUrl,preBypassApiListWithTagToGetResponse)
+                        self.taskUsingThread(self.postBypassSpecialGetRespWithTagUsingRequests,modeConf,origionUrl,preBypassApiListWithTagToGetResponse,bypassResults,threads)
+                        #*增加状态码集输出
+                        codesbypass=[res["status"]["code"] for res in bypassResults]
+                        bypassResults=[x for x in bypassResults if x["status"]["code"] not in blackstatuscodeforbypasscompare]
+                        #过滤同api的相同输出
+                        # apis=[x["api"] for x in fuzzResultList]
+                        for _ in fuzzResultList:#同api 保留原值
+                            # if _["api"] in apis:
+                            selected_items = [item for item in bypassResults if item.get('oriapi') == _["api"]]
+                            if DEBUG and Verbose:
+                                print(f"debuuuuuuging---------------->selected_items:")
+                                try:
+                                    for i in range(5):
+                                        print(selected_items[i])
+                                except:
+                                    pass
+                            if not selected_items:
+                                continue
+                            for vv in selected_items:
+                                if vv["status"]["size"]==_["status"]["size"]:
+                                    if DEBUG and Verbose:
+                                        print(f"与原api命中相同结果: 弹出: {vv['api']}")
+                                    bypassResults.pop(bypassResults.index(vv))
+                            for i in range(len(selected_items)):#同api bypasser过滤
+                                try:
+                                    if selected_items[i]["status"]["size"]==selected_items[i+1]["status"]["size"]:
+                                        if DEBUG and Verbose:
+                                            print(f"bypass api命中相同结果: 弹出: {vv['api']}")
+                                        bypassResults.pop(bypassResults.index(selected_items[i]))
+                                except:
+                                    pass
+                        fuzzResultList=fuzzResultList+bypassResults
+                    else:
+                        print()
+                        print(f"未发现有效bypass tech")
                 #todo 分离敏感信息发现函数
                 # anchors=self.getApiWithoutTokenAnchor(fuzzResultList)
                 anchors=self.getApiWithoutTokenAnchor2(fuzzResultList)
@@ -3036,9 +3414,16 @@ class apiFuzz:
                 #! 键值大小写让我掉泪
                 # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
                 #*增加状态码集输出
-                codes=[res["status"]["code"] for res in fuzzResultList]
-                # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","dead":"alive"}
-                taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","codes":codes,"dead":"alive"}
+                # codes=[res["status"]["code"] for res in fuzzResultList]
+                try:
+                    codes=codesori+codesbypass
+                except:
+                    codes=codesori
+                # taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","codes":codes,"dead":"alive"}
+                try:
+                    taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","bypasser":bypasser,"codes":codes,"dead":"alive"}
+                except:
+                    taskStatusCount={"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"possibleConstructList":possibleConstructList,"apiFigureout":{"inputApis":[],"validApis":validApis,"suspiciousAPis":suspiciousApis},"fingerprint":[],"tag":"default","codes":codes,"dead":"alive"}
                 if not validApis:
                     taskStatusCount["dead"]="dead"
                 return taskStatusCount
@@ -3065,6 +3450,12 @@ class apiFuzz:
             "Accept-Charset": "utf-8",
             "Accept": "",
         }
+        if headersConf:#headers
+            headers.update(headersConf)
+        if cookieConf:
+            headers.update({"Cookie":cookieConf})
+        # if DEBUG:
+        #     print(f"headers: {headers}")
         try:
             #todo 这里没有处理响应超大的情况
             #todo 处理url为下载二进制等大型文件的情况 屏蔽？exe mp4 mp3等内容 融合在危险端口判断内
@@ -3503,6 +3894,13 @@ class apiFuzz:
                 "Accept-Charset": "utf-8",
                 "Accept": "",#覆盖requests默认Accept值，'Accept': '*/*' 否则会导致全部200响应
             }
+        if "spider" in modeConf:
+            if headersConf:#headers
+                headers.update(headersConf)
+            if cookieConf:
+                headers.update({"Cookie":cookieConf})
+            # if DEBUG:
+            #     print(f"headers: {headers}")
         try:#ele {"url":url,"tag":"default","api":api}
             if redirect:#重定向默认
                 resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
@@ -3588,6 +3986,226 @@ class apiFuzz:
         if singlestatus:
             return singlestatus
         return
+
+    #bypass专用请求实现
+    def bypassSpecialGetRespWithTagUsingRequests(self,ele,pbar,lst,statusCount={},headers={},redirect=True):
+        """#*专用于响应获取
+        #* 不会过滤响应，所有相应都会输出
+        ele {"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
+        列表形式
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","api":"api"}]
+        """
+        singlestatus={}
+        countspider.append(1)#统计发包次数
+        if not headers:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
+                "Accept-Charset": "utf-8",
+                "Accept": "",#覆盖requests默认Accept值，'Accept': '*/*' 否则会导致全部200响应
+            }
+        #*bypass禁用cookie header
+        # if "spider" in modeConf:
+        #     if headersConf:#headers
+        #         headers.update(headersConf)
+        #     if cookieConf:
+        #         headers.update({"Cookie":cookieConf})
+            # if DEBUG:
+            #     print(f"headers: {headers}")
+        try:#ele {"url":url,"tag":"default","api":api}
+            if redirect:#重定向默认
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp.encoding = 'utf-8'
+            else:
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False, verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp.encoding = 'utf-8'
+            try:
+                code=resp.status_code
+            except:
+                code=0
+            try:
+                content_size = len(resp.content)
+            except:
+                content_size = 0
+            try:#防止返回body为空或者没有title关键字，例如springboot404
+                page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
+            except:
+                page_title=""
+            try:
+                contentType=resp.headers['content-type']
+                for type in contentTypeList:
+                    if type["key"] in contentType:
+                        contentType=type["tag"]
+            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+                contentType=""
+            #location
+            #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            if resp.history:#重定向实施
+                for res in resp.history:
+                    respStatus["locationcode"].append(res.status_code)
+                    respStatus["location"].append(res.url)
+                    respStatus["locationtimes"]+=1
+                respStatus["locationcode"].append(code)
+                respStatus["location"].append(resp.url)
+            statusCount["rightCount"].append(1)#命中
+            #{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
+            #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","api":"api"}]
+            singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"api":ele["api"]}
+            lst.append(singlestatus)
+        except requests.exceptions.Timeout as e:
+            # timeoutCount+=1
+            statusCount["timeoutCount"].append(1)
+            if DEBUG:
+                if len(statusCount["timeoutCount"])%10==0:
+                    print(f"TIMEOUT {len(statusCount['timeoutCount'])} : {ele['url']}")
+        except requests.exceptions.ConnectionError as e:
+            try:
+                if "Connection reset by peer" in e:
+                    statusCount["connectResetCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectResetCount"])%10==0:
+                            print(f"Connection reset {len(statusCount['connectResetCount'])} : {ele['url']}")
+                else:
+                    statusCount["connectErrorCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectErrorCount"])%10==0:
+                            print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+            except:
+                statusCount["connectErrorCount"].append(1)
+                if DEBUG:
+                    if len(statusCount["connectErrorCount"])%10==0:
+                        print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        except requests.exceptions.RequestException as e:
+            statusCount["connectErrorCount"].append(1)
+            if DEBUG:
+                # print(f"{url} : 错误信息:  {e}")
+                if len(statusCount["connectErrorCount"])%10==0:
+                    print(f"其他连接错误 {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        finally:
+            # 更新进度条
+            pbar.update(1)
+            # singlestatus={}
+        if singlestatus:
+            return singlestatus
+        return
+    #bypass后请求专用实现
+    def postBypassSpecialGetRespWithTagUsingRequests(self,ele,pbar,lst,statusCount={},headers={},redirect=True):
+        """#*专用于响应获取
+        #* 不会过滤响应，所有相应都会输出
+        ele {"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
+        列表形式
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
+        """
+        singlestatus={}
+        countspider.append(1)#统计发包次数
+        if not headers:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
+                "Accept-Charset": "utf-8",
+                "Accept": "",#覆盖requests默认Accept值，'Accept': '*/*' 否则会导致全部200响应
+            }
+        #*bypass禁用cookie header
+        # if "spider" in modeConf:
+        #     if headersConf:#headers
+        #         headers.update(headersConf)
+        #     if cookieConf:
+        #         headers.update({"Cookie":cookieConf})
+            # if DEBUG:
+            #     print(f"headers: {headers}")
+        try:#ele {"url":url,"tag":"default","api":api}
+            if redirect:#重定向默认
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp.encoding = 'utf-8'
+            else:
+                resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False, verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
+                resp.encoding = 'utf-8'
+            try:
+                code=resp.status_code
+            except:
+                code=0
+            try:
+                content_size = len(resp.content)
+            except:
+                content_size = 0
+            try:#防止返回body为空或者没有title关键字，例如springboot404
+                page_title = resp.text.split('<title>')[1].split('</title>')[0]
+                page_title=page_title.strip()
+                titleregex=r'<script[^<>]*>document\.title\s?=\s?\'?"?(.*?)\'?"?;?</script>'
+                titles=re.findall(titleregex,resp.text)
+                if titles:
+                    page_title2=titles[0]
+                    page_title2=page_title2.strip()
+                    if len(page_title2)>len(page_title):
+                        page_title=page_title2
+            except:
+                page_title=""
+            try:
+                contentType=resp.headers['content-type']
+                for type in contentTypeList:
+                    if type["key"] in contentType:
+                        contentType=type["tag"]
+            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+                contentType=""
+            #location
+            #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
+            if resp.history:#重定向实施
+                for res in resp.history:
+                    respStatus["locationcode"].append(res.status_code)
+                    respStatus["location"].append(res.url)
+                    respStatus["locationtimes"]+=1
+                respStatus["locationcode"].append(code)
+                respStatus["location"].append(resp.url)
+            statusCount["rightCount"].append(1)#命中
+            #{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
+            #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
+            singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"oriapi":ele["api"],"api":ele["bypassapi"]}
+            lst.append(singlestatus)
+        except requests.exceptions.Timeout as e:
+            # timeoutCount+=1
+            statusCount["timeoutCount"].append(1)
+            if DEBUG:
+                if len(statusCount["timeoutCount"])%10==0:
+                    print(f"TIMEOUT {len(statusCount['timeoutCount'])} : {ele['url']}")
+        except requests.exceptions.ConnectionError as e:
+            try:
+                if "Connection reset by peer" in e:
+                    statusCount["connectResetCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectResetCount"])%10==0:
+                            print(f"Connection reset {len(statusCount['connectResetCount'])} : {ele['url']}")
+                else:
+                    statusCount["connectErrorCount"].append(1)
+                    if DEBUG:
+                        if len(statusCount["connectErrorCount"])%10==0:
+                            print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+            except:
+                statusCount["connectErrorCount"].append(1)
+                if DEBUG:
+                    if len(statusCount["connectErrorCount"])%10==0:
+                        print(f"Connection error occurred {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        except requests.exceptions.RequestException as e:
+            statusCount["connectErrorCount"].append(1)
+            if DEBUG:
+                # print(f"{url} : 错误信息:  {e}")
+                if len(statusCount["connectErrorCount"])%10==0:
+                    print(f"其他连接错误 {len(statusCount['connectErrorCount'])} : {ele['url']}")
+        finally:
+            # 更新进度条
+            pbar.update(1)
+            # singlestatus={}
+        if singlestatus:
+            return singlestatus
+        return
+
     #通用请求实现
     def universalGetRespWithTagNopbarNolst(self,ele,statusCount={},headers={},redirect=True):
         """#*专用于响应获取
@@ -3994,6 +4612,81 @@ class apiFuzz:
             print(f"常见根APi，拼接总数为: {len(tmpList)}")
         return tmpList
 
+cookieConf={}
+headersConf={}
+threadsConf=0
+modeConf=""#mode字符串
+isBypassOn=False
+isDangerRemove=True
+
+
+
+class ErrorClass:
+    # usageTips="错误！！！使用方式：python3 jjjjjjjs.py  url|urlfile [[fuzz [noapi] [nobody|nofuzz]]|[api [nobody|nofuzz]]]\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径\nnoapi:排除输入的指定api\nnobody: 禁用输出响应body\nnofuzz: 仅获取有效api，无后续响应获取"
+    #todo 尚未完成
+    # usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [rage] [bypass] [output] [thread]\n\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径  fuzz|api eg. api=/jeecg-boot\nnoapi:排除输入的指定api eg. noapi=/system,/worker,/api\nnobody: 禁用输出响应body   nobody|nofuzz\nnofuzz: 仅获取有效api，无后续响应获取\ncookie: 设置cookie（爬取阶段和响应获取阶段）eg. cookie='username=admin'\nheader: 设置header（爬取阶段和响应获取阶段）eg. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger: 解除危险接口限制\nbypass: 对500 401 403 进行bypass测试（bypass模式响应获取阶段会忽略cookie和header）\noutput: 输出位置\nthread: 线程数（爬取阶段和响应获取阶段）eg. thread=200\nrage: 提高线程到200、解除fuzz次数限制、解除危险接口限制、仅结果输出其他信息不输出、自动bypass\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置"
+    usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [thread]\n\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径  fuzz|api eg. api=/jeecg-boot\nnoapi:排除输入的指定api eg. noapi=/system,/worker,/api\nnobody: 禁用输出响应body   nobody|nofuzz\nnofuzz: 仅获取有效api，无后续响应获取\ncookie: 设置cookie（爬取阶段和响应获取阶段）eg. cookie='username=admin'\nheader: 设置header（爬取阶段和响应获取阶段）eg. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger: 解除危险接口限制\nbypass: 对500 401 403 进行bypass测试（bypass模式响应获取阶段会忽略cookie和header）\nthread: 线程数（爬取阶段和响应获取阶段）eg. thread=200\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置"
+    urlnotvalid="错误！！！输入的URL或文件无效"
+    modenotcompatible="错误！！！fuzz模式和api模式仅能选一个"
+    apinoapinotcompatible="错误！！！api模式不能使用noapi选项"
+    nofuzzbypassnotcompatible="错误！！！nofuzz模式不能使用bypass选项"
+    usingcolonforheader="错误！！！请使用 : （分号）设置header键值，不要使用 = （等号）"
+    itisthreadnotthreads="错误！！！请使用 thread 指定线程数，不是 threads"
+    def repeatoptions(option):
+        repeatoptions=f"错误！！！不要重复输入选项: {option}"
+        return repeatoptions
+
+def doNotRepeatOptions(args):
+    defaultParams=["fuzz","api","noapi","nobody","nofuzz","cookie","header","danger","rage","bypass","output","thread"]
+    cleanargs=[x for x in args if x.split("=")[0].lower() in defaultParams]
+    cleanargs=[x.split("=")[0].lower() if "=" in x else x.lower() for x in args]
+    if "fuzz" in cleanargs and "api" in cleanargs:
+        raise ValueError(ErrorClass.modenotcompatible)
+    if "noapi" in cleanargs and "api" in cleanargs:
+        raise ValueError(ErrorClass.apinoapinotcompatible)
+    if "nofuzz" in cleanargs and "bypass" in cleanargs:
+        raise ValueError(ErrorClass.nofuzzbypassnotcompatible)
+    if "threads" in cleanargs:
+        raise ValueError(ErrorClass.itisthreadnotthreads)
+    repeatele = [x for x in set(cleanargs) if cleanargs.count(x) > 1]
+    if repeatele:
+        raise ValueError(ErrorClass.repeatoptions(repeatele))
+    return
+
+def isSpiderModeOn(args):
+    defaultParams=["fuzz","api","noapi","nobody","nofuzz","cookie","header","danger","rage","bypass","output","thread"]
+    cleanargs=[x for x in args if x.split("=")[0].lower() in defaultParams]
+    cleanargs=[x.split("=")[0].lower() if "=" in x else x.lower() for x in args]
+    if "fuzz" not in cleanargs and "api" not in cleanargs:
+        return True
+    return False
+
+def modeWhisper(mode):
+    tmp=[]
+    if "spider" in mode:
+        tmp.append("spider")
+    if "fuzz" in mode:
+        tmp.append("fuzz")
+    if "api" in mode:
+        tmp.append("api")
+    if "noapi" in mode:
+        tmp.append("noapi")
+    if "nobody" in mode:
+        tmp.append("nobody")
+    if "nofuzz" in mode:
+        tmp.append("nofuzz")
+    if "danger" in mode:
+        tmp.append("danger")
+    if "rage" in mode:
+        tmp.append("rage")
+    if "bypass" in mode:
+        tmp.append("bypass")
+    if "output" in mode:
+        tmp.append("output")
+    if "thread" in mode:
+        tmp.append("thread")
+    return tmp
+
 def modeParse(args):
     """通过参数判断程序运行模式 爬取|fuzz|api|noapi
 
@@ -4088,6 +4781,139 @@ def modeParse(args):
             return
     else:
         return
+
+def modeParserImplement2(args=None):
+    global cookieConf
+    global headersConf
+    global threadsConf
+    global modeConf
+    global isDangerRemove
+    global isBypassOn
+    parseResult={"mode":"","batch":False,"apis":[],"noapis":[],"target":"","output":""}
+    delimiter="-"
+    mode=[]
+    if not args:
+        args=sys.argv
+    if len(args)<=1:
+        raise ValueError(ErrorClass.usageTips)
+    #目标判断
+    if isFileValidTxt(args[1]):
+        mode.append("batch")
+        parseResult["batch"]=True
+        parseResult["target"]=args[1]
+    elif isUrlValid(args[1]):
+        parseResult["target"]=args[1]
+    else:
+        raise ValueError(ErrorClass.urlnotvalid)
+    if len(args)==2:
+        mode.append("spider")
+        parseResult["mode"]=delimiter.join(mode)
+        return parseResult
+    params=[]
+    for i in range(2,len(args)):
+        params.append(args[i])
+    doNotRepeatOptions(params)
+    if isSpiderModeOn(params):
+        mode.append("spider")
+        # if DEBUG:
+        #     print(f"mode: {mode}")
+    for i in range(2,len(args)):
+        #todo处理cookie和header为空的情况
+        if args[i].split("=")[0].lower()=="cookie":
+            if DEBUG and Verbose:
+                print(args[i])
+            isCookie=True
+            #cookie使用 [=] 赋值，取整体
+            # cookieConf=args[i].split("=",1)[-1]
+            cookieConf=args[i].split("=",1)[-1].strip()
+        elif args[i].split("=")[0].lower()=="header":
+            if DEBUG and Verbose:
+                print(args[i])
+            isHeader=True
+            #header使用 [=] 赋值，: 分隔单个header的键值 以\n分隔不同header
+            headerRaw=args[i].split("=",1)[-1]
+            if DEBUG and Verbose:
+                print(f"headerRaw---->{headerRaw}")
+            headers=headerRaw.split("\\n")
+            # headers=args[i].split("=",1)[-1].split("\n")
+            if DEBUG and Verbose:
+                print(f"headers---->{headers}")
+            for header in headers:
+                # _={header.split(":")[0].strip("\"").strip("'"):header.split(":")[-1].strip("\"").strip("'")}
+                if "=" in header:
+                    raise ValueError(ErrorClass.usingcolonforheader)
+                _={header.split(":")[0].strip().strip("\"").strip("'"):header.split(":")[-1].strip().strip("\"").strip("'")}
+                # headersConf.append(_)
+                headersConf.update(_)
+            if DEBUG and Verbose:
+                print(f"headersConf: {headersConf}")
+        #fuzz|api
+        elif args[i].lower()=="fuzz":
+            # parseResult["mode"]+="fuzz"
+            mode.append("fuzz")
+            if DEBUG and Verbose:
+                print(parseResult["mode"])
+        elif args[i].replace("api","",1).startswith("="):
+            if args[i].split("=")[0].lower()=="api":
+                mode.append("api")
+                apis=args[i].split("=")[-1].split(",")
+                parseResult["apis"]=apis
+
+        elif args[i].lower()=="api":
+                mode.append("api")
+        #noapi
+        elif args[i].replace("noapi","",1).startswith("="):
+            if args[i].split("=")[0].lower()=="noapi":
+                mode.append("noapi")
+                noapis=args[i].split("=")[-1].split(",")
+                parseResult["noapis"]=noapis
+        elif args[i].lower()=="noapi":
+            mode.append("noapi")
+        #nobody|nofuzz
+        elif args[i].lower()=="nobody":
+            mode.append("nobody")
+        elif args[i].lower()=="nofuzz":
+            mode.append("nofuzz")
+        #danger
+        elif args[i].lower()=="danger":
+            mode.append("danger")
+            isDangerRemove=False
+        #rage
+        elif args[i].lower()=="rage":
+            mode.append("rage")
+        #bypass
+        elif args[i].lower()=="bypass":
+            mode.append("bypass")
+            isBypassOn=True
+        #output
+        elif args[i].lower().startswith("output"):
+            mode.append("output")
+            parseResult["output"]=args[i].split("=",1)[-1]
+        #threads
+        # elif args[i].split("=")[0]=="threads" or args[i].split("=")[0]=="thread":
+        elif args[i].split("=")[0]=="thread":
+            mode.append("thread")
+            threadsConf=int(args[i].split("=")[-1])
+    mode=modeWhisper(mode)
+    #cookie header
+    try:
+        if isCookie:
+            mode.append("cookie")
+    except:
+        pass
+    try:
+        if isHeader:
+            mode.append("header")
+    except:
+        pass
+    finally:
+        parseResult["mode"]=delimiter.join(mode)
+        modeConf=parseResult["mode"]
+        if DEBUG and Verbose:
+            print(f"parseResult: {parseResult}")
+    return parseResult
+
+
 def main():
     #new mode
     #增加仅发现根api模式 不进行根请求 区分nobody模式 修改模式识别功能 取消固定顺序 仅url位置固定
@@ -4106,7 +4932,8 @@ def main():
                 urlList=[x for x in urlList if isUrlValid(x)]
                 batchSpider(mode,urlList)
             else:
-                sys.exit(ErrorClass.usageTips)
+                # sys.exit(ErrorClass.usageTips)
+                raise ValueError(ErrorClass.usageTips)
         elif mode.replace("batch","").startswith("fuzz"):#fuzz
             print(f"mode: {mode}")
             print("处理中")
@@ -4122,7 +4949,8 @@ def main():
                 elif mode=="fuzz" or mode=="fuzznobody" or mode=="fuzznofuzz":
                     pass
                 else:
-                    sys.exit(ErrorClass.usageTips)
+                    # sys.exit(ErrorClass.usageTips)
+                    raise ValueError(ErrorClass.usageTips)
                 origionUrl=args[1]
                 myFuzz=apiFuzz()
                 myFuzz.singleApiFuzzInAction(mode,origionUrl,noneApis)
@@ -4139,7 +4967,8 @@ def main():
                 elif mode=="batchfuzz" or mode=="batchfuzznobody" or mode=="batchfuzznofuzz":
                     pass
                 else:
-                    sys.exit(ErrorClass.usageTips)
+                    # sys.exit(ErrorClass.usageTips)
+                    raise ValueError(ErrorClass.usageTips)
                 filename=args[1]
                 urlList=readFileIntoList(filename)
                 urlList=[x for x in urlList if isUrlValid(x)]
@@ -4156,9 +4985,12 @@ def main():
                 if mode == "api" or mode == "apinobody" or mode == "apinofuzz":
                     pass
                 else:
-                    sys.exit(ErrorClass.usageTips)
+                    # sys.exit(ErrorClass.usageTips)
+                    raise ValueError(ErrorClass.usageTips)
                 apiPath=read_newline()
                 apiPaths=apiPath.split()
+                if not apiPaths:#默认为 /
+                    apiPaths.append("/")
                 print(f"输入的api为: {apiPaths}")
                 print()
                 print("处理中")
@@ -4175,7 +5007,8 @@ def main():
                 if mode in ["batchapi","batchapinobody","batchapinofuzz"]:
                     pass
                 else:
-                    sys.exit(ErrorClass.usageTips)
+                    # sys.exit(ErrorClass.usageTips)
+                    raise ValueError(ErrorClass.usageTips)
                 filename=args[1]
                 apiPath=read_newline()
                 apiPaths=apiPath.split()
@@ -4189,13 +5022,100 @@ def main():
                 # 取消手动输入api情况下的对比 不取消
                 # #todo 或者留下锚点，但是依然输出
         else:
-            sys.exit(ErrorClass.usageTips)
+            # sys.exit(ErrorClass.usageTips)
+            raise ValueError(ErrorClass.usageTips)
     else:
-        sys.exit(ErrorClass.usageTips)
+        # sys.exit(ErrorClass.usageTips)
+        raise ValueError(ErrorClass.usageTips)
 
+
+def main2():
+    #todo api noapi从命令直接输入 同时兼容从cmd提示输入
+    modeparser=modeParserImplement2(sys.argv)
+    #{"mode":"","batch":False,"apis":[],"noapis":[],"target":"","output":""}
+    mode=modeparser["mode"]
+    mode2=mode.replace("-","")
+    isbatch=modeparser["batch"]
+    target=modeparser["target"]
+    print(f"mode: {mode}")
+    if "spider" in mode:
+        if isbatch:
+            urlList=readFileIntoList(target)
+            #todo 输出非有效url信息
+            urlList=[x for x in urlList if isUrlValid(x)]
+            batchSpider(mode2,urlList)
+        else:
+            origionUrl=target
+            singleSpider(mode2,origionUrl)
+    elif mode2.replace("batch","").startswith("fuzz"):#fuzz
+        print("处理中")
+        if "nobody" in mode:
+            print(f"禁用body输出")
+        if "nofuzz"in mode:
+            print(f"仅获取有效api")
+        if "noapi" in mode:
+            if modeparser["noapis"]:
+                noneApis=modeparser["noapis"]
+            else:
+                noneApis=read_newline().split()
+            print(f"排除的api为: {noneApis}")
+        if not isbatch:#单fuzz
+            noneApis=[]
+            origionUrl=target
+            myFuzz=apiFuzz()
+            myFuzz.singleApiFuzzInAction(mode2,origionUrl,noneApis)
+        else:#batchfuzz
+            noneApis=[]
+            filename=target
+            urlList=readFileIntoList(filename)
+            urlList=[x for x in urlList if isUrlValid(x)]
+            myFuzz=apiFuzz()
+            myFuzz.batchApiFuzzInAction(mode2,urlList,noneApis)
+    elif mode2.replace("batch","").startswith("api"):#api
+        if "nobody" in mode:
+            print(f"禁用body输出")
+        if "nofuzz"in mode:
+            print(f"仅获取有效api")
+        if modeparser["apis"]:
+            apiPaths=modeparser["apis"]
+        else:
+            apiPath=read_newline()
+            apiPaths=apiPath.split()
+            if not apiPaths:#默认为 /
+                apiPaths.append("/")
+        print(f"输入的api为: {apiPaths}")
+        if not isbatch:
+            print()
+            print("处理中")
+            origionUrl=target
+            singleUserInputApi(mode2,origionUrl,apiPaths)
+        else:#batchapi
+            filename=target
+            apiPath=read_newline()
+            apiPaths=apiPath.split()
+            print(f"输入的api为: {apiPaths}")
+            print()
+            print("处理中")
+            urlList=readFileIntoList(filename)
+            urlList=[x for x in urlList if isUrlValid(x)]
+            batchUserInputApi(mode2,urlList,apiPaths)
+    else:
+        raise ValueError(ErrorClass.usageTips)
 
 
 if __name__=="__main__":
-    main()
-
-
+    # main2()
+    # handle userinterrupt and thread terminating from sqlmap project
+    try:
+        # main()
+        main2()
+    except KeyboardInterrupt:
+        pass
+    except ValueError as e:
+        print(e)
+    finally:
+        # Reference: http://stackoverflow.com/questions/1635080/terminate-a-multi-thread-python-program
+        if threading.active_count() > 1:
+            os._exit(getattr(os, "_exitcode", 0))
+        else:
+            sys.exit(getattr(os, "_exitcode", 0))
