@@ -16,6 +16,7 @@ import urllib.parse
 from urllib.parse import urlparse
 import json
 import copy
+import chardet
 
 DEBUG=False
 Verbose=False
@@ -38,8 +39,11 @@ juicyApiListKeyWords=["upload","download","config","conf","import","export","que
 #高危文件库
 #todo 文件同时从content-type和文件内容中同时识别，减少误报，但基础的后缀（即使无效）仍需要展示，由用户判断是否需要
 #todo 可以增加确定文件和疑似无效文件展示
-juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","zip","rar","7z","tar.gz","tar","gz","xz","jar","tgz","json"]#获取敏感接口时会与juicyApiListKeyWords合并
+zipFileExtList=["zip","rar","7z","tar.gz","tar","gz","xz","jar","tgz"]
+officeFileExtList=["doc","docx","docm","dot","dotx","dotm","docb","xls","xlsx","xlsm","xlsb","xltx","xltm","xlam","ppt","pptx","pptm","pot","potx","potm","ppa","accdb","accde","accdt","accdr","pst","ost","pub","vsd","vsdx","vss","vssx","vst","vstx","vsw","vstm"]
+juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","json"]#获取敏感接口时会与juicyApiListKeyWords合并
 #{"tag":"jwt","desc":"jwt","regex":r'7{10000}'},
+plainContentypeList=["html","txt","xml","json"]
 # 增加content-type tag库
 contentTypeList=[
     {"key":"text/html","tag":"html"},
@@ -53,6 +57,7 @@ contentTypeList=[
     {"key":"application/xml","tag":"xml"},
     {"key":"application/atom+xml","tag":"atom+xml"},
     {"key":"application/octet-stream","tag":"bin"},
+    {"key":"binary/octet-stream","tag":"bin"},
     {"key":"audio/x-wav","tag":"wav"},
     {"key":"audio/x-ms-wma","tag":"w文件"},
     {"key":"audio/mp3","tag":"mp3"},
@@ -70,6 +75,7 @@ contentTypeList=[
     {"key":"application/x-zip-compressed","tag":"zip"},
     {"key":"application/x-tar","tag":"tar"},
     {"key":"multipart/form-data","tag":"file"},
+    {"key":"image/x-icon","tag":"ico"},
     # {"key":"html","tag":"html"},
 ]
 #敏感信息指纹库
@@ -117,6 +123,7 @@ apiFingerprintWithTag=[
 indexKeywords=[# 作为用来区分首页的标志
         # {"regex":r'doesn\'t work properly without JavaScript enabled',"tag":"webpack","desc":"enabled"},
         {"regex":r'doesn\'t work properly without javascript enabled',"tag":"webpack","desc":"javascript not fine"},
+        {"regex":r'please enable javascript to continue\.',"tag":"webpack","desc":"javascript not fine2"},
         # {"regex":r'<link href="[^\<\>]*app.*\.js"',"tag":"webpack","desc":"webpack"},
         # {"regex":r'<script src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
         # {"regex":r'<script type="text/javascript" src="[^\<\>]*app.*\.js">',"tag":"webpack","desc":"webpack"},
@@ -128,8 +135,9 @@ indexKeywords=[# 作为用来区分首页的标志
         {"regex":r'<(script|link)[^\<\>]*(src|href)\s?=\s?\'?"?[^\<\>]*(main|app|umi|webpack|login|chunk)[^\<\>/]*?\.js\'?"?[^\<\>]*>',"tag":"webpack","desc":"js"},
     ]
 indexKeywordsLowConfidence=[#以分值的方式计算总分值，取较大者为index首页
-    {"regex":r'<link[^\<\>]*href\s?=\'?"?[^\<\>]*(favicon|logo)[^\<\>/]*?\.(ico|png|jpe?g|bmp)\'?"?[^\<\>]*>',"tag":"webpack","desc":"icon","value":30},
-    {"regex":r'<title>.*</title>',"tag":"webpack","desc":"title","value":30},#可信度较低
+    {"regex":r'<link[^\<\>]*href\s?=\s?\'?"?([^\<\>]*?)\.(ico)\'?"?[^\<\>]*>',"tag":"webpack","desc":"icon","value":30},
+    {"regex":r'<(link|img)[^\<\>]*(href|src)\s?=\s?\'?"?[^\<\>]*(favicon|logo)[^\<\>/]*?\.(ico|png|jpe?g|bmp)\'?"?[^\<\>]*>',"tag":"webpack","desc":"icon1","value":30},
+    {"regex":r'<title>\s*?.*\s*?</title>',"tag":"webpack","desc":"title","value":30},#可信度较低
     {"regex":r'document\.title\s?=\s?\'?"?',"tag":"webpack","desc":"title2","value":30},#可信度较低
     {"regex":r'<(script|link)[^\<\>]*(src|href)\s?=\s?\'?"?[^\<\>]*(pollyfill|jquery|user|index)[^\<\>/]*?\.js\'?"?[^\<\>]*>',"tag":"webpack","desc":"jquery/misc","value":60},
     {"regex":r'location\.href\s?=\s?\'?"?',"tag":"webpack","desc":"redirection","value":-30},
@@ -138,6 +146,7 @@ indexKeywordsLowConfidence=[#以分值的方式计算总分值，取较大者为
     #*同时计算body大小，较大者15分递增
 ]
 
+outputStatusCodeQueue=[200,405,500,403,401,404,400,502,0]
 blackstatuscode=[502,500,403,401,404]#过滤敏感接口
 bypassstatuscode=[#todo 目前仅针对500响应进行绕过
     500,
@@ -180,6 +189,8 @@ countspider=[]#单任务统计
 batchcountspider=[]#批处理统计
 # configdomainurl=None
 configdomainurlroot=[]
+encodingConf="utf-8"
+
 
 def readFileIntoList(filename):
     tmpLines=[]
@@ -189,6 +200,10 @@ def readFileIntoList(filename):
                 tmpLines.append(line.strip())
     return tmpLines
 
+#debug信息输出
+def debugger(info,name):
+    if DEBUG:
+        print(f"debugger: {name}: {info}")
 
 def writeLinesIntoFile(lines,filename):
     with open(filename,'w',encoding='utf-8') as f:
@@ -254,12 +269,8 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     """
     cleanurl=getCleanUrl(origionUrl)
     apiList=[{"url":api,"tag":"httpx","api":api} for api in apiList]
-    # urlListWithTag=[cleanurl+ele["url"] for ele in apiList]
     urlListWithTag=[]
     fuzz=apiFuzz()
-    # apiNoneExist={"url":"/"+fuzz.generate_random_string(12),"tag":"anchor","api":"/"+fuzz.generate_random_string(12)}
-    # apiList.append(apiNoneExist)
-    # cleanurlApi={"url":"/","tag":"cleanurl","api":"/"}
     #多重添加，防止无响应导致的错误
     for i in range(10):
         #加tag防止key值重复，导致多重添加url，但元素数量不变
@@ -285,6 +296,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
             print()
             print(f"去除响应中的多重cleanurl,数量 {len(cleanlist)} 个")
     counter=Counter([d["status"]["code"] for d in Results])#["500"]
+    sizecounter=Counter([d["status"]["size"] for d in Results])#["500"]
     Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
     #输出原始响应列表至文件 .js_raw_resp.txt
     filename=".js_raw_resp.txt"
@@ -292,6 +304,7 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     #排除404响应
     #todo 404也有可能是默认响应页面，暂不考虑
     #todo 移除所有异常状态码 #blackstatuscode=[502,500,403,401]
+    notFountResults=[x for x in Results if x["status"]["code"]==404]
     Results=[x for x in Results if x["status"]["code"]!=404]
     #*去除半数以上的500，403，401响应，输出命中次数
     #todo 分离默认页面定位、差异页面分类函数
@@ -300,64 +313,48 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     #todo 默认页面识别
     if defaultResult:
         most_common_elements = sorted([d for d in Results if d['status']['size'] == defaultResult["status"]["size"]],key=lambda item:item["api"])
-        halfnum=(len(Results)-len(most_common_elements))/2
+        # halfnum=(len(Results)-len(most_common_elements))/2
+        #! 每种不良状态码输出4个上限，不再使用标尺
         #*屏蔽过量的同类无效输出，减少干扰
         #blackstatuscode=[502,500,403,401]
-        for code in blackstatuscode:
-            if counter[code]>halfnum and counter[code]>8:#8个为标尺
-                Results=[d for d in Results if d["status"]["code"]!=code]
+        # for code in blackstatuscode:
+        #     if counter[code]>halfnum and counter[code]>8:#8个为标尺
+        #         Results=[d for d in Results if d["status"]["code"]!=code]
         diffResults=sorted([d for d in Results if d['status']['size'] != defaultResult["status"]["size"]],key=lambda item:item["status"]["size"],reverse=True)
         result=defaultResult
-        if result["status"]["code"]!=404:
-            print()
-            print(f"默认(初始)响应页面: 命中 {len(most_common_elements)} 次")
-            if result["status"]['locationtimes']==0:
-                    # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
-                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
-            else:
-                code=",".join([str(x) for x in result["status"]["locationcode"]])
-                location=" --> ".join(result["status"]["location"])
-                # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
-                print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+        # if result["status"]["code"]!=404:
+        print()
+        print(f"默认(初始)响应页面: 命中 {len(most_common_elements)} 次")
+        if result["status"]['locationtimes']==0:
+                # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
+                print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
+        else:
+            code=",".join([str(x) for x in result["status"]["locationcode"]])
+            location=" --> ".join(result["status"]["location"])
+            # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
         if diffResults:
             print()
-            print(f"差异响应页面: {len(diffResults)} 个")
+            print(f"差异响应页面: {len(diffResults)+len(notFountResults)} 个")
             #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"api":"api"}]
-            for result in diffResults:
-                if result["status"]["code"]!=404:
-                    if result["status"]['locationtimes']==0:
-                        # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
-                        print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
-                    else:
-                        code=",".join([str(x) for x in result["status"]["locationcode"]])
-                        location=" --> ".join(result["status"]["location"])
-                        # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
-                        print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+            normalStatusCantDoEverthingTheyWantToo(diffResults,counter,sizecounter)
     else:
-        halfnum=len(Results)/2
+        #! 每种不良状态码输出4个上限，不再使用标尺
+        # halfnum=len(Results)/2
         #*屏蔽过量的同类无效输出，减少干扰
         #blackstatuscode=[502,500,403,401]
-        for code in blackstatuscode:
-            if counter[code]>halfnum and counter[code]>8:#8个为标尺
-                Results=[d for d in Results if d["status"]["code"]!=code]
+        # for code in blackstatuscode:
+        #     if counter[code]>halfnum and counter[code]>8:#8个为标尺
+        #         Results=[d for d in Results if d["status"]["code"]!=code]
         Results=sorted([d for d in Results],key=lambda item:item["status"]["size"],reverse=True)
-        for result in Results:
-            if result["status"]["code"]!=404:
-                if result["status"]['locationtimes']==0:
-                    # print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['title']}]")
-                    print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
-                else:
-                    code=",".join([str(x) for x in result["status"]["locationcode"]])
-                    location=" --> ".join(result["status"]["location"])
-                    # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
-                    print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
-    print()
+        normalStatusCantDoEverthingTheyWantToo(Results,counter,sizecounter)
     # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
-    print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [502]: {counter[502]} 次")
+    if notFountResults:#404页面展示
+        normalStatusCantDoEverthingTheyWantToo(notFountResults,counter,sizecounter)
     print()
+    print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [400]: {counter[400]} 次 [502]: {counter[502]} 次")
     #todo 可能要调整位置
     #敏感信息获取展示
-    # fuzzTest=apiFuzz()
     fuzz.infoScratcherAndDisplay(Results)
     if DEBUG:
         print()
@@ -375,8 +372,6 @@ def somehowreplaceUrlfinder(url):
     mySpider.Spider(url)#def Spider(self,url,isdeep=True):
     resultUrl = mySpider.RemoveRepeatElement(resultUrl)
     if resultUrl and url.strip("/")+"/" not in resultUrl:
-        if DEBUG:
-            print(f"debuuuging---->appending-->origionUrl-->{url}")
         mySpider.appendUrl(url)
     lst=resultUrl.copy()
     lst=urlExcludeJs(lst,url)
@@ -386,6 +381,92 @@ def somehowreplaceUrlfinder(url):
 
     return lst
 
+
+def normalStatusCantDoEverthingTheyWantToo(respList,counter,sizecounter):
+    #过滤200响应中重复多次的响应，最多显示4个
+    # debugger(len(respList),"输入list")
+    # codelist=[]
+    # for _ in respList:
+    #     if _["status"]["code"] not in codelist:
+    #         codelist.append(_["status"]["code"])
+    # debugger(codelist,"codelist")
+    for statuscode in outputStatusCodeQueue:
+        lst=[x for x in respList if x["status"]["code"]==statuscode]
+        if not lst:
+            continue
+        # debugger(statuscode,"statuscode")
+        # debugger(len(lst),f"{statuscode} lst")
+        count=0#记录size出现次数
+        tmpsize=0#记录size
+        tmpcode=0
+        for result in lst:
+            # if result["status"]["code"]!=404:
+            #200 过滤同size4次
+            if result["status"]["code"]==200:
+                if tmpsize!=result["status"]["size"]:
+                    tmpsize=result["status"]["size"]
+                    # tmpcode=result["status"]["code"]
+                    count=0
+                count+=1
+                if count<5:
+                    if result["status"]['locationtimes']==0:
+                        if count==4:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] 同size屏蔽: {sizecounter[tmpsize]-4} 次")
+                        else:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
+                    else:
+                        code=",".join([str(x) for x in result["status"]["locationcode"]])
+                        location=" --> ".join(result["status"]["location"])
+                        if count==4:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}] 同size屏蔽: {sizecounter[tmpsize]-4} 次")
+                        else:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+                # else:
+                #     break
+            elif result["status"]["code"] !=200 and result["status"]["code"] not in [404,502]:
+                if tmpcode!=result["status"]["code"]:
+                    tmpcode=result["status"]["code"]
+                    # tmpcode=result["status"]["code"]
+                    count=0
+                count+=1
+                if count<5:
+                    if result["status"]['locationtimes']==0:
+                        if count==4:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] {statuscode}屏蔽: {counter[tmpcode]-4} 次")
+                        else:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
+                    else:
+                        code=",".join([str(x) for x in result["status"]["locationcode"]])
+                        location=" --> ".join(result["status"]["location"])
+                        if count==4:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}] {statuscode}屏蔽: {counter[tmpcode]-4} 次")
+                        else:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+                # else:
+                #     break
+            else:
+                # for result in lst[:4]:
+                if tmpcode!=result["status"]["code"]:
+                    tmpcode=result["status"]["code"]
+                    count=0
+                    print()
+                count+=1
+                if count<5:
+                    if result["status"]['locationtimes']==0:
+                        if count==4:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] {statuscode}屏蔽: {len(lst)-4} 次")
+                        else:
+                            print(f"{result['url']} [{result['status']['code']}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}]")
+                    else:
+                        code=",".join([str(x) for x in result["status"]["locationcode"]])
+                        location=" --> ".join(result["status"]["location"])
+                        # print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['title']}] [{location}]")
+                        if count==4:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}] {statuscode}屏蔽: {len(lst)-4} 次")
+                        else:
+                            print(f"{result['url']} [{code}] [{result['status']['size']}] [{result['status']['type']}] [{result['status']['title']}] [{location}]")
+                # else:
+                #     break
 
 def rawRespListIntoFile(respList,filename):
     #输出原始响应列表至文件 .js_raw_resp.txt
@@ -418,6 +499,9 @@ def whenWeLocateIndexWeMustSmileNotCry(respList):
     if DEBUG:
         print(f"信心正则处理中")
     Results=copy.deepcopy(respList)
+    #移除压缩文件或其他大文件
+    _=zipFileExtList+officeFileExtList
+    Results=[x for x in Results if x["url"].strip(".").split(".")[-1] not in _]
     # confidencePool=[]
     tmp={}
     sizeamountcount=0
@@ -465,6 +549,9 @@ def locateDefaultPage(origionUrl,respList):
     """
     # Results=respList.copy()
     Results=copy.deepcopy(respList)
+    #移除压缩文件或其他大文件
+    _=zipFileExtList+officeFileExtList
+    Results=[x for x in Results if x["url"].strip(".").split(".")[-1] not in _]
 
     tmpindex={}#正则匹配结果
     # for resp in respList:#*正则匹配到的值为绝对首页，覆盖所有判断
@@ -475,16 +562,16 @@ def locateDefaultPage(origionUrl,respList):
                 matches=re.findall(regex["regex"],cleanresp["resp"].text.lower())
                 if matches:
                     tmpindex=cleanresp
-                    if DEBUG and Verbose:
+                    if DEBUG:
                         print()
                         print(f"debuuuuging--index定位---{cleanresp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
                         print(f"debuuuuuging--cleanurl命中正则----定位为首页index->{cleanresp['url']}")
                     return tmpindex
-        if DEBUG and Verbose:
+        if DEBUG:
             print()
             print(f"cleanurl正则定位失败")
     except Exception as e:
-        if DEBUG and Verbose:
+        if DEBUG:
             print()
             print(f"{e}")
             print(f"cleanurl定位失败")
@@ -495,7 +582,7 @@ def locateDefaultPage(origionUrl,respList):
             matches=re.findall(regex["regex"],resp["resp"].text.lower())
             # matches=re.match(regex["regex"],resp["resp"].text.lower())
             if matches:
-                if DEBUG and Verbose:
+                if DEBUG:
                     print(f"debuuuuging--index定位---{resp['url']}---->原因-->{regex['desc']} 命中--> {matches}")
                 # tmpindex=resp
                 # break
@@ -519,45 +606,45 @@ def locateDefaultPage(origionUrl,respList):
             print(f"tmpindex---->{tmpindex['url']}")
         tmpindexs=[x for x in Results if x["status"]["size"]==tmpindex["status"]["size"]]
         tmpindexs=sorted(tmpindexs, key=lambda item: len(item["api"]))
-        if DEBUG and Verbose:
+        if DEBUG:
             print(f"debuuuuging--同大小取正则最短值为首页index---->{tmpindexs[0]['url']}")
-        if DEBUG and Verbose:
+        if DEBUG:
             print(f"debuuuging--首页定位结果---->{tmpindexs[0]['url']}")
         return tmpindexs[0]#取正则最短值
     else:
-        if DEBUG and Verbose:
+        if DEBUG:
             print(f"debuuuuging--index正则定位失败")
         confideceIndex=whenWeLocateIndexWeMustSmileNotCry(respList)
         if confideceIndex:#信心正则命中
             return confideceIndex["object"]
         else:#绝对正则无果，信心正则无果
-            if DEBUG and Verbose:
+            if DEBUG:
                 print(f"debuuuuging------->绝对正则无果，信心正则无果")
             #*不应该以固定模式应对海量的场景，在正则定位失败后直接以输入url作为首页即可
             try:
                 defaultResult=[x for x in Results if x["url"].strip("/")==origionUrl.strip("/")][0]
-                if DEBUG and Verbose:
+                if DEBUG:
                     print(f"定位初始输入成功，使用初始输入为首页index")
-                if DEBUG and Verbose:
+                if DEBUG:
                     print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
                 #todo 这里需要考虑初始输入页面存在重定向和200内部script重定向的问题
                 return defaultResult
             except:
-                if DEBUG and Verbose:
+                if DEBUG:
                     print(f"未发现初始目标响应")
             if not defaultResult:#初始输入不存在时，以cleanurl作为首页
                 try:
                     defaultResult=[x for x in Results if x["tag"].startswith("cleanurl")][0]
-                    if DEBUG and Verbose:
+                    if DEBUG:
                         print(f"debuuuging--无正则命中，无初始输入，cleanurl作为首页index---->{defaultResult['url']}")
                         print(f"debuuuuging--cleanurl响应定位---->{defaultResult['url']}")
                         print(f"debuuuging--首页定位结果---->{defaultResult['url']}")
                     return defaultResult
                 except:
                     # defaultResult={}
-                    if DEBUG and Verbose:
+                    if DEBUG:
                         print(f"debuuuuging--未发现cleanurl响应---->")
-    if DEBUG and Verbose:
+    if DEBUG:
         print(f"debuuuuging------>未发现首页")
     return
 
@@ -920,8 +1007,6 @@ class jsSpider():
             headers.update(headersConf)
         if cookieConf:
             headers.update({"Cookie":cookieConf})
-        # if DEBUG and isdeep:
-        #     print(f"headers: {headers}")
         try:
             resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
         except requests.exceptions.Timeout as e:
@@ -998,8 +1083,10 @@ class jsSpider():
                     continue
                 if js.startswith("https:") or js.startswith("http:"):
                     self.appendJs(js)
-                    if isdeep:
-                        self.Spider(js,False)
+                    #处理js正则命中域名中http://xxx.jsxxx.com的情况
+                    if len(js.strip(".").split("."))>=3:
+                        if isdeep:
+                            self.Spider(js,False)
                 elif js.startswith("//"):
                     self.appendJs(scheme+":"+js)
                     if isdeep:
@@ -1013,8 +1100,6 @@ class jsSpider():
                     if isdeep:
                         self.Spider(host+root+js,False)
     def urlFind(self,res,host,scheme,path,isdeep=False):
-        # if DEBUG:
-        #     if 
         root=""
         rootregex=re.compile(r'/.*/{1}|/')
         roots=rootregex.findall(path)
@@ -1160,6 +1245,8 @@ class jsSpider():
                         mydicc[line]=None
                         tmp.append(line)
         return tmp
+
+
 
 class apiFuzz:
     #todo 建立项目文件，每个目标生成不同结果文件？低优先级
@@ -1762,7 +1849,10 @@ class apiFuzz:
             fuzzResultList (_type_): _description_
         """
         suspiciousFileList=[]
-        for res in fuzzResultList:
+        #移除无效状态码响应
+        _=[x for x in fuzzResultList if x["status"]["code"] not in blackstatuscode]
+        # for res in fuzzResultList:
+        for res in _:
             # ext=res["api"].split(".")[-1]
             # if ext:
             #     for fileext in juicyFileExtList:
@@ -1785,8 +1875,9 @@ class apiFuzz:
         """
         suspiciousFileList={"url": "", "api": "", "tag": "", "desc": "","code":0,"size":0,"type":"","count": 1}
         ext=respdicc["api"].split(".")[-1]
+        _=juicyFileExtList+zipFileExtList
         if ext:
-            for fileext in juicyFileExtList:
+            for fileext in _:
                 if ext==fileext:
                     suspiciousFileList={"url": respdicc["url"], "api": respdicc["api"], "tag": ext, "desc": ext,"code":respdicc["status"]["code"],"size":respdicc["status"]["size"],"type":respdicc["status"]["type"],"count": 1}
         if suspiciousFileList["url"]!="":
@@ -1911,6 +2002,12 @@ class apiFuzz:
         #[{"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size", "count": 1}]
         #{"url": "url", "api": "api", "tag": "idcard", "desc": "身份证","code":"code","size":"size", "count": 1} 计数匹配的次数
         # infolist={"url": "", "api": "", "tag": "", "desc": "","code":0,"size":0,"type":"","count": 1}
+
+        #排除zip文件和其他office类文件
+        if respdicc["url"].split(".")[-1] in zipFileExtList:
+            return
+        if respdicc["url"].split(".")[-1] in officeFileExtList:
+            return
         infolist={"url": "", "api": "", "tag": "", "desc": "","code":0,"size":0,"type":"","count": 1,"matches":[]}
         for regex in sensitiveInfoRegex:
             matches=re.findall(regex["regex"],respdicc["resp"].text)
@@ -1932,8 +2029,10 @@ class apiFuzz:
         Returns:
             _type_: _description_
         """
+        _=[x for x in fuzzResultList if x["url"].strip(".").split(".")[-1] not in zipFileExtList+officeFileExtList]
         constructs=[]
-        for info in fuzzResultList:
+        # for info in fuzzResultList:
+        for info in _:
             if info["status"]["code"]==405:#todo 405自动切换method访问检测
                 tmp={"url": info["url"], "api": info["api"], "tag": "methodchange", "desc": "切换method","code":info["status"]["code"],"size":info["status"]["size"],"type":info["status"]["type"],"count": 1}
                 constructs.append(tmp)
@@ -1967,7 +2066,10 @@ class apiFuzz:
         #敏感接口
         if infoApi:
             print()
-            print(f"发现敏感接口如下(不包含危险接口): {len(infoApi)} 个")
+            if isDangerRemove:
+                print(f"发现敏感接口如下(已排除危险接口): {len(infoApi)} 个")
+            else:
+                print(f"发现敏感接口如下(包含危险接口): {len(infoApi)} 个")
             for info in infoApi:
                 # print(f"[{info['desc']}]: 命中次数: {info['count']} 状态码: [{info['code']}] 响应大小: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
@@ -2980,7 +3082,11 @@ class apiFuzz:
             if not "nofuzz" in mode:
                 if status["juicyApiList"]:
                     print()
-                    print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
+                    if isDangerRemove:
+                        print(f"发现敏感接口如下(已排除危险接口): {len(status['juicyApiList'])} 个")
+                    else:
+                        print(f"发现敏感接口如下(包含危险接口): {len(status['juicyApiList'])} 个")
+                    # print(f"发现敏感接口如下(不包含危险接口): {len(status['juicyApiList'])} 个")
                     for info in status["juicyApiList"]:
                         print(f"[{info['desc']}]: count: {info['count']} code: [{info['code']}] size: [{info['size']}] type: [{info['type']}] url: {info['url']} api: {info['api']}")
                 else:
@@ -3059,7 +3165,7 @@ class apiFuzz:
                 counter=Counter(codes)
                 # print()
                 # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
-                print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [502]: {counter[502]} 次")
+                print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [400]: {counter[400]} 次 [502]: {counter[502]} 次")
                 print()
 
         else:
@@ -3430,6 +3536,26 @@ class apiFuzz:
             elif Method==self.universalGetRespWithTagUsingRequests:
                 return fuzzResultList
         return
+    # contenttype获取
+    def getContentType(self,resp):
+        contentType=""
+        try:
+            contentType=resp.headers['content-type']
+            for type in contentTypeList:
+                if type["key"] in contentType:
+                    contentType=type["tag"]
+                    break
+        except:
+            try:
+                contentType=resp.headers['contenttype']
+                for type in contentTypeList:
+                    if type["key"] in contentType:
+                        contentType=type["tag"]
+                        break
+            except:
+                pass
+        return contentType
+
     def getFuzzUrlResultUsingRequests(self,mode,url,pbar,fuzzResultList=[],anchorRespList=[],statusCount={}):
         """此函苏用于获取单url fuzz结果 通过锚定结果列表 判断正确api 过滤输出
         httpx有大病，用requests加多线程完成这里的匹配
@@ -3482,13 +3608,21 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            #             break
+            # except:
+            #     contentType=resp.headers['contenttype']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            #             break
+            # if not contentType:
+            #     contentType=""
             respstatus={"code":code,"size":content_size,"type":contentType,"title":page_title}
             cleanurl=getCleanUrl(url)
             api=url.replace(cleanurl,"")
@@ -3597,13 +3731,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title}
             statusCount["rightCount"].append(1)
             lst.append(respStatus)
@@ -3674,13 +3809,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title}
             statusCount["rightCount"].append(1)
             lst.append(respStatus)
@@ -3752,13 +3888,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title}
             statusCount["rightCount"].append(1)#命中
             #{"url":url,"status":respStatus,"resp":resp,"tag":tag}
@@ -3833,13 +3970,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title}
             statusCount["rightCount"].append(1)#命中
             #{"url":url,"status":respStatus,"resp":resp,"tag":tag}
@@ -3904,10 +4042,30 @@ class apiFuzz:
         try:#ele {"url":url,"tag":"default","api":api}
             if redirect:#重定向默认
                 resp=requests.get(ele["url"],headers=headers,timeout=(5,10), verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
-                resp.encoding = 'utf-8'
+                # resp.encoding = encodingConf
+                try:
+                    contentType=self.getContentType(resp)
+                    if contentType and contentType in plainContentypeList:
+                        content = resp.content
+                        encoding = chardet.detect(content)['encoding']
+                        resp.encoding=encoding
+                    else:
+                        resp.encoding = encodingConf
+                except:
+                    resp.encoding = encodingConf
             else:
                 resp=requests.get(ele["url"],headers=headers,timeout=(5,10),allow_redirects=False, verify=False)#请求/读取超时5,10s，增大读取超时，有些响应很慢
-                resp.encoding = 'utf-8'
+                # resp.encoding = encodingConf
+                try:
+                    contentType=self.getContentType(resp)
+                    if contentType and contentType in plainContentypeList:
+                        content = resp.content
+                        encoding = chardet.detect(content)['encoding']
+                        resp.encoding=encoding
+                    else:
+                        resp.encoding = encodingConf
+                except:
+                    resp.encoding = encodingConf
             try:
                 code=resp.status_code
             except:
@@ -3928,13 +4086,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             #location
             #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
@@ -4038,13 +4197,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             #location
             #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
@@ -4147,13 +4307,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             #location
             #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
@@ -4251,13 +4412,14 @@ class apiFuzz:
                         page_title=page_title2
             except:
                 page_title=""
-            try:
-                contentType=resp.headers['content-type']
-                for type in contentTypeList:
-                    if type["key"] in contentType:
-                        contentType=type["tag"]
-            except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
-                contentType=""
+            contentType=self.getContentType(resp)
+            # try:
+            #     contentType=resp.headers['content-type']
+            #     for type in contentTypeList:
+            #         if type["key"] in contentType:
+            #             contentType=type["tag"]
+            # except:#resp出错或响应中无content-type，跳过打印body和屏蔽html
+            #     contentType=""
             #location
             #{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
             respStatus={"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0}
@@ -4618,7 +4780,7 @@ threadsConf=0
 modeConf=""#mode字符串
 isBypassOn=False
 isDangerRemove=True
-
+argsnotcompatiblewithspider=["nobody","nofuzz","bypass","noapi"]
 
 
 class ErrorClass:
@@ -4632,6 +4794,9 @@ class ErrorClass:
     nofuzzbypassnotcompatible="错误！！！nofuzz模式不能使用bypass选项"
     usingcolonforheader="错误！！！请使用 : （分号）设置header键值，不要使用 = （等号）"
     itisthreadnotthreads="错误！！！请使用 thread 指定线程数，不是 threads"
+    def spiderbypassnotcompatible(option):
+        falseoption=f"错误！！！spider模式不能使用 {option} , 另外这些选项同样不与spider模式同时出现 {','.join([x for x in argsnotcompatiblewithspider if x!=option])}"
+        return falseoption
     def repeatoptions(option):
         repeatoptions=f"错误！！！不要重复输入选项: {option}"
         return repeatoptions
@@ -4648,6 +4813,10 @@ def doNotRepeatOptions(args):
         raise ValueError(ErrorClass.nofuzzbypassnotcompatible)
     if "threads" in cleanargs:
         raise ValueError(ErrorClass.itisthreadnotthreads)
+    if "spider" in cleanargs:
+        for x in argsnotcompatiblewithspider:
+            if x  in cleanargs:
+                raise ValueError(ErrorClass.spiderbypassnotcompatible(x))
     repeatele = [x for x in set(cleanargs) if cleanargs.count(x) > 1]
     if repeatele:
         raise ValueError(ErrorClass.repeatoptions(repeatele))
@@ -4789,6 +4958,7 @@ def modeParserImplement2(args=None):
     global modeConf
     global isDangerRemove
     global isBypassOn
+    global DEBUG
     parseResult={"mode":"","batch":False,"apis":[],"noapis":[],"target":"","output":""}
     delimiter="-"
     mode=[]
@@ -4812,11 +4982,10 @@ def modeParserImplement2(args=None):
     params=[]
     for i in range(2,len(args)):
         params.append(args[i])
-    doNotRepeatOptions(params)
     if isSpiderModeOn(params):
         mode.append("spider")
-        # if DEBUG:
-        #     print(f"mode: {mode}")
+        params.append("spider")
+    doNotRepeatOptions(params)
     for i in range(2,len(args)):
         #todo处理cookie和header为空的情况
         if args[i].split("=")[0].lower()=="cookie":
@@ -4894,6 +5063,8 @@ def modeParserImplement2(args=None):
         elif args[i].split("=")[0]=="thread":
             mode.append("thread")
             threadsConf=int(args[i].split("=")[-1])
+        elif args[i].lower()=="debug":
+            DEBUG=True
     mode=modeWhisper(mode)
     #cookie header
     try:
@@ -5104,18 +5275,20 @@ def main2():
 
 
 if __name__=="__main__":
-    # main2()
-    # handle userinterrupt and thread terminating from sqlmap project
-    try:
-        # main()
+    if "debug" in sys.argv:
         main2()
-    except KeyboardInterrupt:
-        pass
-    except ValueError as e:
-        print(e)
-    finally:
-        # Reference: http://stackoverflow.com/questions/1635080/terminate-a-multi-thread-python-program
-        if threading.active_count() > 1:
-            os._exit(getattr(os, "_exitcode", 0))
-        else:
-            sys.exit(getattr(os, "_exitcode", 0))
+    else:
+    # handle userinterrupt and thread terminating from sqlmap project
+        try:
+            # main()
+            main2()
+        except KeyboardInterrupt:
+            pass
+        except ValueError as e:
+            print(e)
+        finally:
+            # Reference: http://stackoverflow.com/questions/1635080/terminate-a-multi-thread-python-program
+            if threading.active_count() > 1:
+                os._exit(getattr(os, "_exitcode", 0))
+            else:
+                sys.exit(getattr(os, "_exitcode", 0))
