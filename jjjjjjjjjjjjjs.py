@@ -91,7 +91,8 @@ sensitiveInfoRegex=[#todo 待完善
     {"tag":"password","desc":"password","regex":r'["\']?((p|P)assword|PASSWORD|(c|C)redential|CREDENTIAL)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?password[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
     {"tag":"email","desc":"邮箱","regex":r'(([a-zA-Z0-9][_|\.])*[a-zA-Z0-9]+@([a-zA-Z0-9][-|_|\.])*[a-zA-Z0-9]+\.((?!js|css|jpg|jpeg|png|ico)[a-zA-Z]{2,}))'},
     {"tag":"internalIP","desc":"内网IP","regex":r'[^0-9]((127\.0\.0\.1)|(localhost)|(10\.\d{1,3}\.\d{1,3}\.\d{1,3})|(172\.((1[6-9])|(2\d)|(3[01]))\.\d{1,3}\.\d{1,3})|(192\.168\.\d{1,3}\.\d{1,3}))'},
-    {"tag":"miniopass","desc":"minio账号密码(minioadmin)","regex":r'minioadmin/minioadmin|=minioadmin|= minioadmin'},
+    # {"tag":"miniopass","desc":"minio账号密码(minioadmin)","regex":r'minioadmin/minioadmin|=minioadmin|= minioadmin'},
+    {"tag":"miniopass","desc":"minio账号密码(minioadmin)","regex":r'(minioadmin/minioadmin)|(=\s?\'?"?minioadmin)'},
     {"tag":"MAC Address","desc":"MAC地址","regex":r'(^([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5})|[^a-zA-Z0-9]([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5}))'},
     {"tag":"username","desc":"username","regex":r'["\']?((u|U)sername|USERNAME)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?username[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
 ]
@@ -201,9 +202,12 @@ def readFileIntoList(filename):
     return tmpLines
 
 #debug信息输出
-def debugger(info,name):
+def debugger(info,name=""):
     if DEBUG:
-        print(f"debugger: {name}: {info}")
+        if name:
+            print(f"debugger: {name}: {info}")
+        else:
+            print(f"debugger: {info}")
 
 def writeLinesIntoFile(lines,filename):
     with open(filename,'w',encoding='utf-8') as f:
@@ -1978,13 +1982,21 @@ class apiFuzz:
             info=self.getWonderfulInfoFromSingleResult(respdicc)
             if info:
                 duplicate=False
-                for x in infolist:
-                    if x["tag"]==info["tag"] and x["size"]==info["size"]:
-                        duplicate=True
-                        break
-                if duplicate:
-                    continue
-                infolist.append(info)
+                if not infolist:
+                    infolist=info
+                else:
+                    for _ in info:
+                        for x in infolist:
+                            if _["tag"]=="phone":
+                                if x["tag"]==_["tag"] and x["size"]==_["size"]:
+                                    duplicate=True
+                                    break
+                                infolist.append(_)
+                                break
+                        if duplicate:
+                            break
+                    if duplicate:
+                        continue
         if infolist:
             infolist=sorted([d for d in infolist],key=lambda item:item["size"],reverse=True)
             return infolist
@@ -2008,14 +2020,15 @@ class apiFuzz:
             return
         if respdicc["url"].split(".")[-1] in officeFileExtList:
             return
+        tmp=[]
         infolist={"url": "", "api": "", "tag": "", "desc": "","code":0,"size":0,"type":"","count": 1,"matches":[]}
         for regex in sensitiveInfoRegex:
             matches=re.findall(regex["regex"],respdicc["resp"].text)
             if matches:
-                # infolist={"url":respdicc["url"],"api":respdicc["api"],"tag":regex["tag"],"desc":regex["desc"],"code":respdicc["status"]["code"],"size":respdicc["status"]["size"],"type":respdicc["status"]["type"],"count":len(matches)}
                 infolist={"url":respdicc["url"],"api":respdicc["api"],"tag":regex["tag"],"desc":regex["desc"],"code":respdicc["status"]["code"],"size":respdicc["status"]["size"],"type":respdicc["status"]["type"],"count":len(matches),"matches":matches}
-        if infolist["url"]!="":
-            return infolist
+                tmp.append(infolist)
+        if tmp:
+            return tmp
         return
 
     #可构造包提示
@@ -3152,12 +3165,19 @@ class apiFuzz:
                 for finger in status["fingerprint"]:
                         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
             #*bypass输出
-            if status["bypasser"]:
-                print()
-                print(f"定位到可用bypass tech")
-                for _ in status["bypasser"]:
-                    print(f"tech: '{_['tech']}' pos: {_['pos']}")
-            # print()
+            if "bypass" in modeConf:
+                try:
+                    if status["bypasser"]:
+                        print()
+                        print(f"Bypass: 定位到可用bypass tech")
+                        for _ in status["bypasser"]:
+                            print(f"tech: '{_['tech']}' pos: {_['pos']}")
+                    else:
+                        print()
+                        print(f"Bypass: 未发现可用bypass tech")
+                except:
+                    print()
+                    print(f"Bypass: 未发现可用bypass tech")
             print()
             #*增加状态码集输出
             if "nofuzz" not in mode:
