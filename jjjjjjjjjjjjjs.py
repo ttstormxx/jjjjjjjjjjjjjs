@@ -99,7 +99,8 @@ sensitiveInfoRegex=[#todo 待完善
 #todo 扩充参数缺失关键字库
 missingRegex=[
             {"regex":r'参数.+不能为空',"tag":"missing","desc":"参数不能为空"},
-            {"regex":r'不支持get请求方法，支持以下post',"tag":"missing","desc":"不支持的方法"},
+            # {"regex":r'不支持get请求方法，支持以下post',"tag":"missing","desc":"不支持的方法"},
+            {"regex":r'(不支持\w*?(请求)|(方式)|(方法))',"tag":"missing","desc":"不支持的方法"},
             {"regex":r'不能为空',"tag":"missing","desc":"参数不能为空"},
             {"regex":r'缺少参数',"tag":"missing","desc":"缺少参数"},
             {"regex":r'is missing',"tag":"missing","desc":"is missing"},
@@ -108,6 +109,7 @@ missingRegex=[
             {"regex":r'parameter.+is not present',"tag":"missing","desc":"is not present"},
             {"regex":r'参数缺失',"tag":"missing","desc":"参数缺失"},
             {"regex":r'参数异常',"tag":"missing","desc":"参数异常"},
+            {"regex":r'参数错误',"tag":"missing","desc":"参数错误"},
             {"regex":r'非法的?参数',"tag":"missing","desc":"非法参数"},
         ]
 #todo 扩充完善指纹库
@@ -228,7 +230,8 @@ batchcountspider=[]#批处理统计
 # configdomainurl=None
 configdomainurlroot=[]
 encodingConf="utf-8"
-
+jsMapList=[]#jsmap列表
+jsmapRegex=r'//#\ssourceMappingURL\s?=\s?\'?"?([^\<\>]*?\.js\.map\s?$)'
 
 def readFileIntoList(filename):
     tmpLines=[]
@@ -393,6 +396,12 @@ def somehowreplaceHttpx(mode,origionUrl,apiList):
     # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
     if notFountResults:#404页面展示
         normalStatusCantDoEverthingTheyWantToo(notFountResults,counter,sizecounter)
+    #*jsmap信息
+    if jsMapList:
+        print()
+        print(f"检测到sourcemap文件, 可进行逆向还原JS文件")
+        for _ in jsMapList:
+            print(_)
     print()
     print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [400]: {counter[400]} 次 [502]: {counter[502]} 次")
     #todo 可能要调整位置
@@ -891,10 +900,9 @@ def urlToFile(mode,origionUrl,filename):
     urlList=getParseJsFromUrl(origionUrl)
     if not urlList:
         print("爬取结果为空")
-        print()
+        # print()
         return
     print()
-
     print(f"url爬取完毕，原始结果输出到 {rawFilename}, url总数: {len(urlList)}")
     writeLinesIntoFile(urlList,rawFilename)
 
@@ -932,20 +940,24 @@ def urlToFile(mode,origionUrl,filename):
 def singleSpider(mode,origionUrl):
     global countspider
     global batchcountspider
+    global jsMapList
     print(f"开始处理: {origionUrl}")
-    print()
+    # print()
     filename=".js_result.txt"
     # mode=""
     urlToFile(mode,origionUrl=origionUrl,filename=filename)
     batchcountspider+=countspider
     countspider=[]#置空
+    jsMapList=[]#置空
 
 def batchSpider(mode,urlList):
     for url in urlList:
         print()
         print(f"处理URL: {url}")
         singleSpider(mode,url)
-    print(f"批爬虫:发包次数: {len(batchcountspider)} 次")
+    if DEBUG:
+        print()
+        print(f"批爬虫:发包次数: {len(batchcountspider)} 次")
 # 接受新内容输入
 def read_newline():
     print()
@@ -958,6 +970,7 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
     global configdomainurlroot
     global countspider
     global batchcountspider
+    global jsMapList
     urlList=getParseJsFromUrl(origionUrl)
     if not urlList:
         # sys.exit("爬取结果为空")
@@ -984,6 +997,7 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
         print(f"单输入:发包次数: {len(countspider)} 次")
     batchcountspider+=countspider
     countspider=[]#置空
+    jsMapList=[]#置空
     return singlestatus
 def batchUserInputApi(mode,urlList,apiPaths):
     batchTaskStatus=[]
@@ -1051,6 +1065,15 @@ class jsSpider():
             headers.update({"Cookie":cookieConf})
         try:
             resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
+            #*定位js.map
+            if url.endswith(".js"):
+                # cleanurl=getCleanUrl(url)
+                # if "sourceMappingURL" in resp.text and ".js.map" in resp.text:
+                #     self.appendJsMap(url+".map")
+                matches=re.findall(jsmapRegex,resp.text[-100:])
+                if matches:
+                    # self.appendJsMap(cleanurl+"/"+matches[0])
+                    self.appendJsMap(url+".map")
         except requests.exceptions.Timeout as e:
             print(f"TIMEOUT: {url}")
             return
@@ -1288,6 +1311,10 @@ class jsSpider():
                         tmp.append(line)
         return tmp
 
+    def appendJsMap(self,js):
+        if js in jsMapList:
+            return
+        jsMapList.append(js)
 
 
 class apiFuzz:
@@ -2330,12 +2357,8 @@ class apiFuzz:
         #[{"url":url,"tag":"preBypass","tech":"","pos":0,"bypassapi":"","api":api}]
         # preBypassApiListWithTag=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
         lsttechpos=self.getBypassListWithTagWithTechAndPos(origionUrl,preBypassApiListWithTag)
-        debugger(lsttechpos,"lsttechpos")
         lsttailmerge=self.getBypassListWithTagUsingTailMerge(origionUrl,preBypassApiListWithTag)
-        debugger(lsttailmerge,"lsttailmerge")
         lstinsertinto=self.getBypassListWithTagByInsertInto(origionUrl,preBypassApiListWithTag)
-        debugger(len(lstinsertinto),"lstinsertinto: 个数")
-        debugger(lstinsertinto,"lstinsertinto")
         preBypassApiListWithTag=lsttechpos+lsttailmerge+lstinsertinto
         #平衡500次内容上限，洗牌完成全部tech测试
         if not preBypassApiListWithTag:
@@ -3190,6 +3213,7 @@ class apiFuzz:
         global configdomainurlroot
         global countspider
         global batchcountspider
+        global jsMapList
         urlList=getParseJsFromUrl(origionUrl)
         # if len(urlList)==0:
         if not urlList:
@@ -3206,13 +3230,15 @@ class apiFuzz:
         myFuzz=apiFuzz()
         singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
         configdomainurlroot=[]#单次结束置空
+        print()
         self.standardTaskStatusOutput(mode,singlestatus)
-        
+
         if DEBUG:
             print()
             print(f"单fuzz:发包次数: {len(countspider)} 次")
         batchcountspider+=countspider
         countspider=[]#置空
+        jsMapList=[]#置空
         return singlestatus
     # batch模式下增加结果统计
     def batchApiFuzzInAction(self,mode,urlList,noneApis):
@@ -3336,12 +3362,18 @@ class apiFuzz:
                 except:
                     print()
                     print(f"Bypass: 未发现可用bypass tech")
-            print()
+            # print()
             #*增加状态码集输出
             if "nofuzz" not in mode:
+                #*jsmap信息
+                if jsMapList:
+                    print()
+                    print(f"检测到sourcemap文件, 可进行逆向还原JS文件")
+                    for _ in jsMapList:
+                        print(_)
                 codes=singlestatus["codes"]
                 counter=Counter(codes)
-                # print()
+                print()
                 # print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次")
                 print(f"命中: [200]: {counter[200]} 次 [405]: {counter[405]} 次 [500]: {counter[500]} 次 [403]: {counter[403]} 次 [401]: {counter[401]} 次 [404]: {counter[404]} 次 [400]: {counter[400]} 次 [502]: {counter[502]} 次")
                 # print()
