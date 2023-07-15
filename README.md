@@ -12,35 +12,40 @@ python3.8
 安装依赖:
 
 `pip3 install -r requirements.txt`
-### 快捷命令
-
-`alias jjjjjjjjjjjjjs='python3 jjjjjjjjjjjjjs.py'`
 
 ### 使用方式
 ```
-使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [thread]
+使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush]
 
-url|file:目标url
+url|file: 目标url
 
-fuzz:自动fuzz接口
+fuzz:     自动fuzz接口
 
-api:用户指定api根路径  fuzz|api eg. api=/jeecg-boot
+api:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot
 
-noapi:排除输入的指定api eg. noapi=/system,/worker,/api
+noapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api
 
-nobody: 禁用输出响应body   nobody|nofuzz
+nobody:   禁用输出响应body   nobody|nofuzz
 
-nofuzz: 仅获取有效api，无后续响应获取
+nofuzz:   仅获取有效api，无后续响应获取
 
-cookie: 设置cookie（爬取阶段和响应获取阶段）eg. cookie='username=admin'
+cookie:   设置cookie        e.g. cookie='username=admin'
 
-header: 设置header（爬取阶段和响应获取阶段）eg. header='X-Forwarded-For: localhost\nX-Access-Token: eyJxxxxx'
+header:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'
 
-danger: 解除危险接口限制
+danger:   解除危险接口限制
 
-bypass: 对500 401 403 进行bypass测试（bypass模式响应获取阶段会忽略cookie和header）
+bypass:   对500 401 403 进行bypass测试
 
-thread: 线程数（爬取阶段和响应获取阶段）eg. thread=200
+output:   输出到文件 (txt)
+
+thread:   线程数     e.g. thread=200
+
+proxy:    设置代理 (仅指定proxy时，自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'
+
+flush:    清除项目历史记录，重新爬取
+
+目标参数的位置固定在参数第一位，其他参数不限制出现位置
 ```
 > 注意: 目标参数的位置固定在参数第一位，其他参数不限制出现位置
 
