@@ -23,9 +23,11 @@ DEBUG=False
 Verbose=False
 
 if sys.platform.lower()=="linux":
-    BaseDir="/home/ubuntu/.local/share/jjjjjjjjjjjjjs/output/"#项目输出目录
+    username = os.getlogin()
+    BaseDir=f"/home/{username}/.local/share/jjjjjjjjjjjjjs/output/"#项目输出目录
 else:
-    BaseDir="C:\\Users\\monkey\\AppData\\Local\\jjjjjjjjjjjjjs\\output"#项目输出目录
+    username = os.getlogin()
+    BaseDir=f"C:\\Users\\{username}\\AppData\\Local\\jjjjjjjjjjjjjs\\output"#项目输出目录
 
 versionConf="  version_v2.3.1"
 #移除敏感高危接口  delete remove drop update shutdown restart
