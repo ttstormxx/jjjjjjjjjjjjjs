@@ -1155,11 +1155,12 @@ def getParseJsFromUrl(origionUrl):
                 apis=projectJson["api"]
                 urlList=[cleanurl+x for x in apis]
                 return urlList
-        if projectJson:
-            cleanurl=getCleanUrl(origionUrl)
-            apis=projectJson["api"]
-            urlList=[cleanurl+x for x in apis]
-            return urlList
+        else:
+            if projectJson and projectJson["url"]:
+                cleanurl=getCleanUrl(origionUrl)
+                apis=projectJson["api"]
+                urlList=[cleanurl+x for x in apis]
+                return urlList
     else:
         print("重置项目爬取结果历史记录")
     #todo 这里projectJson["url"] 要处理畸形url
