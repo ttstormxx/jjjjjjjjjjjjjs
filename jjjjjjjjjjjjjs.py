@@ -27,7 +27,7 @@ if sys.platform.lower()=="linux":
 else:
     BaseDir="C:\\Users\\monkey\\AppData\\Local\\jjjjjjjjjjjjjs\\output"#项目输出目录
 
-versionConf="  version_v2.3"
+versionConf="  version_v2.3.1"
 #移除敏感高危接口  delete remove drop update shutdown restart
 #todo 这里需要修改为在api中判断而不是在url中，域名中有可能出现列表中的值
 #todo 识别非webpack站点，仅输出js信息 输出匹配敏感信息?
@@ -96,6 +96,7 @@ sensitiveInfoRegex=[#todo 待完善
     {"tag":"phone","desc":"手机号","regex":r'[^0-9A-Za-z](1(3([0-35-9]\d|4[1-8])|4[14-9]\d|5([\d]\d|7[1-79])|66\d|7[2-35-8]\d|8\d{2}|9[89]\d)\d{7})[^0-9A-Za-z]'},
     {"tag":"jwt","desc":"jwt","regex":r'ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}|ey[A-Za-z0-9_\/+-]{10,}\.[A-Za-z0-9._\/+-]{10,}'},
     {"tag":"accesskey","desc":"accesskey","regex":r'([A|a]ccess[K|k]ey[I|i][d|D]|[A|a]ccess[K|k]ey[S|s]ecret)'},
+    {"tag":"apikey","desc":"apikey","regex":r'([A|a]pi[K|k]ey[I|i][d|D]|[A|a]pi[K|k]ey[S|s]ecret)'},
     {"tag":"password","desc":"password","regex":r'["\']?((p|P)assword|PASSWORD|(c|C)redential|CREDENTIAL)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?password[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
     {"tag":"email","desc":"邮箱","regex":r'(([a-zA-Z0-9][_|\.])*[a-zA-Z0-9]+@([a-zA-Z0-9][-|_|\.])*[a-zA-Z0-9]+\.((?!js|css|jpg|jpeg|png|ico)[a-zA-Z]{2,}))'},
     {"tag":"internalIP","desc":"内网IP","regex":r'[^0-9]((127\.0\.0\.1)|(localhost)|(10\.\d{1,3}\.\d{1,3}\.\d{1,3})|(172\.((1[6-9])|(2\d)|(3[01]))\.\d{1,3}\.\d{1,3})|(192\.168\.\d{1,3}\.\d{1,3}))'},
@@ -305,6 +306,8 @@ def outputToFile(contentlist,filename):
 def projectOutput(projectinfo,projectpath):
     #输出结果到当前目录
     global projectJson
+    if not projectinfo["url"]:#防止程序错误时输出错误结果到项目文件
+        return
     filename=os.path.join(projectpath,projectFileConf)
     filepath=os.path.dirname(filename)
     createProjectDir(filepath)
@@ -360,7 +363,8 @@ def projectLoad(url):
                     #畸形url  /#/abcd 和 / 是相同的
                     # debugger(_['url'],"projectJson url")
                     # debugger(url,"目标url")
-                    if _['url']==url:
+                    # if _['url'].strip("/")==url.strip("/"):
+                    if _['url']:
                         print(f"成功加载项目历史文件: {projectfile}")
                         if DEBUG:
                             currenthistory=[]
@@ -377,10 +381,12 @@ def projectLoad(url):
                         return _
                     else:
                         if not DEBUG:
-                            print(f"项目历史文件错误: url不同: {projectfile}")
+                            # print(f"项目历史文件错误: url不同: {projectfile}")
+                            print(f"项目历史文件错误: {projectfile}")
                             return
                         else:
-                            print(f"项目历史文件错误: {projectfile}\n原因: 项目历史url: {_['url']}\n目标url: {url}")
+                            # print(f"项目历史文件错误: {projectfile}\n原因: 项目历史url: {_['url']}\n目标url: {url}")
+                            print(f"项目历史文件错误: {projectfile} 原因: 项目历史url为空")
                             return
                 except Exception as e:
                     if DEBUG:
@@ -499,11 +505,14 @@ def writeLinesIntoFile(lines,filename):
             f.write(line+"\n")
         f.close()
 def isFileValidTxt(filename):
-    # 使用mimetypes来获取文件的MIME类型
-    mimetype, encoding = mimetypes.guess_type(filename)
-    if mimetype and mimetype.startswith('text'):
-        # 如果MIME类型以"text"开头，则可以认为文件是文本文件
-        return True
+    if os.path.isfile(filename):
+        # 使用mimetypes来获取文件的MIME类型
+        mimetype, encoding = mimetypes.guess_type(filename)
+        if mimetype and mimetype.startswith('text'):
+            # 如果MIME类型以"text"开头，则可以认为文件是文本文件
+            return True
+        else:
+            return False
     else:
         return False
 def isUrlValid(URL):
@@ -1570,6 +1579,7 @@ class jsSpider():
         self.jsFind(resp.text, host, scheme, path,isdeep)
         #提取url
         self.urlFind(resp.text, host, scheme, path,isdeep)
+        return
 
     def jsFind(self,res,host,scheme,path,isdeep=False):
         rootregex=re.compile(r'/.*/{1}|/')
@@ -4782,10 +4792,10 @@ class apiFuzz:
         #*敏感信息[{'url': 'url', 'api': 'api', 'tag': 'idcard', 'desc': '身份证', 'count': 1}]
         """
         countspider.append(1)#统计发包次数
-        if "nobody" in mode:#禁用body输出
-            noOutput=True
-        else:
-            noOutput=False
+        # if "nobody" in mode:#禁用body输出
+        #     noOutput=True
+        # else:
+        #     noOutput=False
         #todo 增加randomAgent
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.9 Safari/537.36",
@@ -6082,7 +6092,7 @@ projectJson={#不输出响应body信息
 
 class ErrorClass:
     # usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [thread]\n\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径  fuzz|api eg. api=/jeecg-boot\nnoapi:排除输入的指定api eg. noapi=/system,/worker,/api\nnobody: 禁用输出响应body   nobody|nofuzz\nnofuzz: 仅获取有效api，无后续响应获取\ncookie: 设置cookie（爬取阶段和响应获取阶段）eg. cookie='username=admin'\nheader: 设置header（爬取阶段和响应获取阶段）eg. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger: 解除危险接口限制\nbypass: 对500 401 403 进行bypass测试（bypass模式响应获取阶段会忽略cookie和header）\nthread: 线程数（爬取阶段和响应获取阶段）eg. thread=200\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"
-    usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush]\n\nurl|file: 目标url\nfuzz:     自动fuzz接口\napi:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot\nnoapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api\nnobody:   禁用输出响应body   nobody|nofuzz\nnofuzz:   仅获取有效api，无后续响应获取\ncookie:   设置cookie        e.g. cookie='username=admin'\nheader:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger:   解除危险接口限制\nbypass:   对500 401 403 进行bypass测试\noutput:   输出到文件 (txt)\nthread:   线程数     e.g. thread=200\nproxy:    设置代理 (仅指定proxy时，自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'\nflush:    清除项目历史记录，重新爬取\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"+versionConf
+    usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush]\n\nurl|file: 目标url\nfuzz:     自动fuzz接口\napi:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot\nnoapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api\nnobody:   禁用输出响应body   nobody|nofuzz\nnofuzz:   仅获取有效api，无后续响应获取\ncookie:   设置cookie        e.g. cookie='username=admin'\nheader:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger:   解除危险接口限制\nbypass:   对500 401 403 进行bypass测试\noutput:   输出到文件 (txt)  e.g. output='dest.txt'\nthread:   线程数     e.g. thread=200\nproxy:    设置代理 (仅指定proxy时，自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'\nflush:    清除项目历史记录，重新爬取\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"+versionConf
     urlnotvalid="错误！！！输入的URL或文件无效"
     modenotcompatible="错误！！！fuzz模式和api模式仅能选一个"
     apinoapinotcompatible="错误！！！api模式不能使用noapi选项"

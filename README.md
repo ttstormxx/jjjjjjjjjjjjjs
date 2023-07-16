@@ -37,7 +37,7 @@ danger:   解除危险接口限制
 
 bypass:   对500 401 403 进行bypass测试
 
-output:   输出到文件 (txt)
+output:   输出到文件 (txt)  e.g. output='dest.txt'
 
 thread:   线程数     e.g. thread=200
 
