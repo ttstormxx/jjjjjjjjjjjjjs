@@ -1,3 +1,4 @@
 pandas
 requests
 tqdm
+chardet
