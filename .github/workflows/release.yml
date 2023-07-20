@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-and-deploy-ubuntu:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04]
+        python-version: [3.8]
+        arch: [amd64]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build and package for ${{ matrix.os }}
+        run: |
+            pyinstaller -F jjjjjjjjjjjjjs.py
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/jjjjjjjjjjjjjs
+          asset_name: ${{env.PROJECT_NAME}}_linux_${{matrix.arch}}
+          asset_content_type: application/octet-stream
+        #   api_key: ${{ secrets.GITHUB_TOKEN }}
+        env:
+            PROJECT_NAME: actiontest
+            # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+  build-and-deploy-windows:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+        python-version: [3.8]
+        arch: [amd64]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build and package for ${{ matrix.os }}
+        run: |
+          pyinstaller -F jjjjjjjjjjjjjs.py
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/jjjjjjjjjjjjjs.exe
+          asset_name: ${{env.PROJECT_NAME}}_windows_${{matrix.arch}}.exe
+          asset_content_type: application/octet-stream
+        #   api_key: ${{ secrets.GITHUB_TOKEN }}
+        env:
+            PROJECT_NAME: actiontest
+            # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

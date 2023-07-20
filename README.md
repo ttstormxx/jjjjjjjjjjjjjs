@@ -15,13 +15,13 @@ python3.8
 
 ### 使用方式
 ```
-使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush]
+使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush] [deep]
 
 url|file: 目标url
 
 fuzz:     自动fuzz接口
 
-api:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot
+api:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot 或 api=http://api.test.com/root
 
 noapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api
 
@@ -31,7 +31,7 @@ nofuzz:   仅获取有效api，无后续响应获取
 
 cookie:   设置cookie        e.g. cookie='username=admin'
 
-header:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'
+header:   设置header        e.g. header='X-Forwarded-For: localhost\nX-Access-Token: eyJxxxxx'
 
 danger:   解除危险接口限制
 
@@ -41,9 +41,13 @@ output:   输出到文件 (txt)  e.g. output='dest.txt'
 
 thread:   线程数     e.g. thread=200
 
-proxy:    设置代理 (仅指定proxy时，自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'
+proxy:    设置代理 (仅指定proxy时, 自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'
 
-flush:    清除项目历史记录，重新爬取
+flush:    清除项目历史记录, 重新爬取
+
+deep:     深度模式(一般不需要开启), 开启后爬取深度上限:URL 2层 JS 3层,同源URL 3层, 同源JS 5层
+
+debug:    展示更多信息
 
 目标参数的位置固定在参数第一位，其他参数不限制出现位置
 ```

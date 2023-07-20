@@ -18,6 +18,7 @@ import json
 import copy
 import chardet
 import time
+import ctypes
 
 DEBUG=False
 Verbose=False
@@ -29,7 +30,7 @@ else:
     username = os.getlogin()
     BaseDir=f"C:\\Users\\{username}\\AppData\\Local\\jjjjjjjjjjjjjs\\output"#项目输出目录
 
-versionConf="  version_v2.3.1"
+versionConf="  version_v2.4.0"
 #移除敏感高危接口  delete remove drop update shutdown restart
 #todo 这里需要修改为在api中判断而不是在url中，域名中有可能出现列表中的值
 #todo 识别非webpack站点，仅输出js信息 输出匹配敏感信息?
@@ -40,9 +41,9 @@ commonApiList=["api","Api","system","sys","user"]#常见api根路径
 apiRootBlackList=["\\","#","$","@","*","+","-","|","!","%","^","~","[","]"]#api根黑名单，这里的值不可能出现在根API 起始值 中
 apiBlackList=["\\","#","$","@"]#api黑名单，这里的值不可能出现在URL中
 anchorUserInterface="#"#单独输出拼接#为根api的情况，用于手动浏览器访问，排序从短到长
-fileExtBlackList=["exe","apk","mp4","mkv","mp3","flv","js","css","less","woff","vue","svg","png","jpg","jpeg","tif","bmp","gif","psd","exif","fpx","avif","apng","webp","swf",",","ico","svga","html","htm"]
+fileExtBlackList=["exe","apk","mp4","mkv","mp3","flv","js","css","less","woff","vue","svg","png","jpg","jpeg","tif","bmp","gif","psd","exif","fpx","avif","apng","webp","swf",",","ico","svga","html","htm","shtml","ts","eot","lrc","tpl","cur","success","error","complete",]
 urlBlackList=[" "]#URL不可能出现空格
-juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database","edit","manage"]#* 用于在fuzz结束时，提示用户需要高度关注的api
+juicyApiListKeyWords=["upload","download","config","conf","import","export","query","list","customer","register","reg","info","reset","password","pass","pwd","credential","actuator","refresh","druid","metrics","httptrace","swagger-ui","redis","user","sys","system","adm","admin","datasource","database","edit","manage","forget","v1","v2","docs"]#* 用于在fuzz结束时，提示用户需要高度关注的api
 #高危文件库
 #todo 文件同时从content-type和文件内容中同时识别，减少误报，但基础的后缀（即使无效）仍需要展示，由用户判断是否需要
 #todo 可以增加确定文件和疑似无效文件展示
@@ -53,41 +54,244 @@ juicyFileExtList=["xls","xlsx","doc","docx","txt","xml","json"]#获取敏感接�
 plainContentypeList=["html","txt","xml","json"]
 # 增加content-type tag库
 contentTypeList=[#使用 in 逻辑
-    {"key":"text/html","tag":"html"},
-    {"key":"application/json","tag":"json"},
-    {"key":"text/plain","tag":"txt"},
-    {"key":"text/xml","tag":"xml"},
-    {"key":"image/gif","tag":"gif"},
-    {"key":"image/jpeg","tag":"jpg"},
-    {"key":"image/png","tag":"png"},
-    {"key":"image/*","tag":"img"},
-    {"key":"image/x-icon","tag":"ico"},
-    {"key":"ico","tag":"ico"},
-    {"key":"application/xhtml+xml","tag":"xhtml"},
-    {"key":"application/xml","tag":"xml"},
-    {"key":"application/atom+xml","tag":"atom+xml"},
-    {"key":"application/octet-stream","tag":"bin"},
-    {"key":"binary/octet-stream","tag":"bin"},
-    {"key":"audio/x-wav","tag":"wav"},
-    {"key":"audio/x-ms-wma","tag":"w文件"},
-    {"key":"audio/mp3","tag":"mp3"},
-    {"key":"video/x-ms-wmv","tag":"wmv"},
-    {"key":"video/mpeg4","tag":"mp4"},
-    {"key":"video/avi","tag":"avi"},
-    {"key":"application/pdf","tag":"pdf"},
-    {"key":"application/msword","tag":"msword"},
-    {"key":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","tag":"docx"},
-    {"key":"application/vnd.ms-excel","tag":"excel"},
-    {"key":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","tag":"xlsx"},
-    {"key":"application/vnd.ms-powerpoint","tag":"ppt"},
-    {"key":"application/vnd.openxmlformats-officedocument.presentationml.presentation","tag":"pptx"},
-    {"key":"application/zip","tag":"zip"},
-    {"key":"application/x-zip-compressed","tag":"zip"},
-    {"key":"application/x-tar","tag":"tar"},
-    {"key":"multipart/form-data","tag":"file"},
-    {"key":"application/vnd.tcpdump.pcap","tag":"pcap"},
+    {'key': 'text/html', 'tag': 'html'},
+    {'key': 'application/json', 'tag': 'json'},
+    {'key': 'text/plain', 'tag': 'txt'},
+    {'key': 'text/xml', 'tag': 'xml'},
+    {'key': 'text/javascript', 'tag': 'js'},
+    {'key': 'image/gif', 'tag': 'gif'},
+    {'key': 'image/jpeg', 'tag': 'jpg'},
+    {'key': 'image/jpg', 'tag': 'jpg'},
+    {'key': 'image/png', 'tag': 'png'},
+    {'key': 'image/*', 'tag': 'img'},
+    {'key': 'image/x-icon', 'tag': 'ico'},
+    {'key': 'ico', 'tag': 'ico'},
+    {'key': 'application/xhtml+xml', 'tag': 'xhtml'},
+    {'key': 'application/xml', 'tag': 'xml'},
+    {'key': 'application/atom+xml', 'tag': 'atom+xml'},
+    {'key': 'application/octet-stream', 'tag': 'bin'},
+    {'key': 'binary/octet-stream', 'tag': 'bin'},
+    {'key': 'audio/x-wav', 'tag': 'wav'},
+    {'key': 'audio/x-ms-wma', 'tag': 'w文件'},
+    {'key': 'audio/mp3', 'tag': 'mp3'},
+    {'key': 'video/x-ms-wmv', 'tag': 'wmv'},
+    {'key': 'video/mpeg4', 'tag': 'mp4'},
+    {'key': 'video/avi', 'tag': 'avi'},
+    {'key': 'application/pdf', 'tag': 'pdf'},
+    {'key': 'application/msword', 'tag': 'msword'},
+    {'key': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'tag': 'docx'},
+    {'key': 'application/vnd.ms-excel', 'tag': 'excel'},
+    {'key': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'tag': 'xlsx'},
+    {'key': 'application/vnd.ms-powerpoint', 'tag': 'ppt'},
+    {'key': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'tag': 'pptx'},
+    {'key': 'application/zip', 'tag': 'zip'},
+    {'key': 'application/x-zip-compressed', 'tag': 'zip'},
+    {'key': 'application/x-tar', 'tag': 'tar'},
+    {'key': 'multipart/form-data', 'tag': 'file'},
+    {'key': 'application/vnd.tcpdump.pcap', 'tag': 'pcap'},
+    {'key': 'application/x-www-form-urlencoded', 'tag': 'post'},
+    {'key': 'application/vnd.spring-boot.actuator.v2+json', 'tag': 'spring-json'},
+    {'key': 'text/x-cobol', 'tag': 'x-cobol'},
+    {'key': 'application/mbox', 'tag': 'mbox'},
+    {'key': 'application/n-triples', 'tag': 'n-triples'},
+    {'key': 'text/x-gpsql', 'tag': 'x-gpsql'},
+    {'key': 'text/x-chdr', 'tag': 'x-chdr'},
+    {'key': 'text/x-modelica', 'tag': 'x-modelica'},
+    {'key': 'text/babel$', 'tag': 'babel$'},
+    {'key': 'text/x-groovy', 'tag': 'x-groovy'},
+    {'key': 'text/x-sparksql', 'tag': 'x-sparksql'},
+    {'key': 'text/x-octave', 'tag': 'x-octave'},
+    {'key': 'x-shader/x-fragment', 'tag': 'x-fragment'},
+    {'key': 'text/x-haml', 'tag': 'x-haml'},
+    {'key': 'text/x-c++hdr', 'tag': 'x-c++hdr'},
+    {'key': 'text/x-gfm', 'tag': 'x-gfm'},
+    {'key': 'text/x-esper', 'tag': 'x-esper'},
+    {'key': 'stylesheet/less', 'tag': 'less'},
+    {'key': 'application/x-erb', 'tag': 'x-erb'},
+    {'key': 'text/markdown', 'tag': 'markdown'},
+    {'key': 'application/pgp-encrypted', 'tag': 'pgp-encrypted'},
+    {'key': 'text/x-latex', 'tag': 'x-latex'},
+    {'key': 'text/x-python', 'tag': 'x-python'},
+    {'key': 'text/x-tiddlywiki', 'tag': 'x-tiddlywiki'},
+    {'key': 'text/x-squirrel', 'tag': 'x-squirrel'},
+    {'key': 'text/mirc', 'tag': 'mirc'},
+    {'key': 'application/x-javascript', 'tag': 'x-javascript'},
+    {'key': 'text/troff', 'tag': 'troff'},
+    {'key': 'text/x-nginx-conf', 'tag': 'x-nginx-conf'},
+    {'key': 'text/typescript-jsx', 'tag': 'typescript-jsx'},
+    {'key': 'message/http', 'tag': 'http'},
+    {'key': 'text/x-hive', 'tag': 'x-hive'},
+    {'key': 'text/x-xu', 'tag': 'x-xu'},
+    {'key': 'text/x-clojure', 'tag': 'x-clojure'},
+    {'key': 'text/x-idl', 'tag': 'x-idl'},
+    {'key': 'text/x-gql', 'tag': 'x-gql'},
+    {'key': 'text/x-pug', 'tag': 'x-pug'},
+    {'key': 'text/apl', 'tag': 'apl'},
+    {'key': 'application/xquery', 'tag': 'xquery'},
+    {'key': 'audio/wav', 'tag': 'wav'},
+    {'key': 'text/x-php', 'tag': 'x-php'},
+    {'key': 'video/mp4', 'tag': 'mp4'},
+    {'key': 'text/x-csharp', 'tag': 'x-csharp'},
+    {'key': 'text/x-go', 'tag': 'x-go'},
+    {'key': 'text/x-twig', 'tag': 'x-twig'},
+    {'key': 'text/x-vue', 'tag': 'x-vue'},
+    {'key': 'text/x-protobuf', 'tag': 'x-protobuf'},
+    {'key': 'text/x-literate-haskell', 'tag': 'x-literate-haskell'},
+    {'key': 'text/x-django', 'tag': 'x-django'},
+    {'key': 'text/x-smarty', 'tag': 'x-smarty'},
+    {'key': 'text/sass/i', 'tag': 'i'},
+    {'key': 'text/vbscript', 'tag': 'vbscript'},
+    {'key': 'text/jsx', 'tag': 'jsx'},
+    {'key': 'text/x-rpm-spec', 'tag': 'x-rpm-spec'},
+    {'key': 'application/ld+json', 'tag': 'ld+json'},
+    {'key': 'application/x-powershell', 'tag': 'x-powershell'},
+    {'key': 'text/x-elm', 'tag': 'x-elm'},
+    {'key': 'text/x-cmake', 'tag': 'x-cmake'},
+    {'key': 'text/x-erlang', 'tag': 'x-erlang'},
+    {'key': 'text/x-fsharp', 'tag': 'x-fsharp'},
+    {'key': 'text/x-livescript', 'tag': 'x-livescript'},
+    {'key': 'text/x-pig', 'tag': 'x-pig'},
+    {'key': 'text/x-sql', 'tag': 'x-sql'},
+    {'key': 'text/coffeescript', 'tag': 'coffeescript'},
+    {'key': 'text/x-z80', 'tag': 'x-z80'},
+    {'key': 'application/dart', 'tag': 'dart'},
+    {'key': 'application/x-aspx', 'tag': 'x-aspx'},
+    {'key': 'text/x-gas', 'tag': 'x-gas'},
+    {'key': 'text/typescript', 'tag': 'typescript'},
+    {'key': 'application/x-httpd-php', 'tag': 'x-httpd-php'},
+    {'key': 'text/x-csrc', 'tag': 'x-csrc'},
+    {'key': 'application/x-jsp', 'tag': 'x-jsp'},
+    {'key': 'text/x-perl', 'tag': 'x-perl'},
+    {'key': 'application/x-json', 'tag': 'x-json'},
+    {'key': 'text/x-objectivec', 'tag': 'x-objectivec'},
+    {'key': 'video/ogg', 'tag': 'ogg'},
+    {'key': 'text/x-webidl', 'tag': 'x-webidl'},
+    {'key': 'application/x-cypher-query', 'tag': 'x-cypher-query'},
+    {'key': 'text/x-puppet', 'tag': 'x-puppet'},
+    {'key': 'application/edn', 'tag': 'edn'},
+    {'key': 'text/x-sas', 'tag': 'x-sas'},
+    {'key': 'text/x-rst', 'tag': 'x-rst'},
+    {'key': 'text/x-properties', 'tag': 'x-properties'},
+    {'key': 'text/x-fortran', 'tag': 'x-fortran'},
+    {'key': 'auth/forge-password', 'tag': 'forge-password'},
+    {'key': 'text/x-verilog', 'tag': 'x-verilog'},
+    {'key': 'text/x-ttcn-cfg', 'tag': 'x-ttcn-cfg'},
+    {'key': 'text/x-lua', 'tag': 'x-lua'},
+    {'key': 'text/x-cassandra', 'tag': 'x-cassandra'},
+    {'key': 'text/x-sml', 'tag': 'x-sml'},
+    {'key': 'text/x-brainfuck', 'tag': 'x-brainfuck'},
+    {'key': 'application/pgp', 'tag': 'pgp'},
+    {'key': 'text/x-d', 'tag': 'x-d'},
+    {'key': 'text/x-gss', 'tag': 'x-gss'},
+    {'key': 'text/x-oz', 'tag': 'x-oz'},
+    {'key': 'text/x-diff', 'tag': 'x-diff'},
+    {'key': 'application/javascript', 'tag': 'javascript'},
+    {'key': 'text/x-fcl', 'tag': 'x-fcl'},
+    {'key': 'text/x-sqlite', 'tag': 'x-sqlite'},
+    {'key': 'text/x-ecl', 'tag': 'x-ecl'},
+    {'key': 'text/x-scss', 'tag': 'x-scss'},
+    {'key': 'text/jinja2', 'tag': 'jinja2'},
+    {'key': 'application/sparql-query', 'tag': 'sparql-query'},
+    {'key': 'text/x-julia', 'tag': 'x-julia'},
+    {'key': 'text/x-dockerfile', 'tag': 'x-dockerfile'},
+    {'key': 'text/x-mariadb', 'tag': 'x-mariadb'},
+    {'key': 'text/yaml', 'tag': 'yaml'},
+    {'key': 'text/x-forth', 'tag': 'x-forth'},
+    {'key': 'text/x-stex', 'tag': 'x-stex'},
+    {'key': 'text/x-coffeescript', 'tag': 'x-coffeescript'},
+    {'key': 'text/x-vhdl', 'tag': 'x-vhdl'},
+    {'key': 'text/x-kotlin', 'tag': 'x-kotlin'},
+    {'key': 'text/x-java', 'tag': 'x-java'},
+    {'key': 'text/x-haxe', 'tag': 'x-haxe'},
+    {'key': 'text/x-rustsrc', 'tag': 'x-rustsrc'},
+    {'key': 'application/x-slim', 'tag': 'x-slim'},
+    {'key': 'text/x-spreadsheet', 'tag': 'x-spreadsheet'},
+    {'key': 'text/x-jade', 'tag': 'x-jade'},
+    {'key': 'text/x-pgsql', 'tag': 'x-pgsql'},
+    {'key': 'text/x-rpm-changes', 'tag': 'x-rpm-changes'},
+    {'key': 'text/x-feature', 'tag': 'x-feature'},
+    {'key': 'audio/x-m4a', 'tag': 'x-m4a'},
+    {'key': 'text/x-markdown', 'tag': 'x-markdown'},
+    {'key': 'text/x-eiffel', 'tag': 'x-eiffel'},
+    {'key': 'text/x-yacas', 'tag': 'x-yacas'},
+    {'key': 'text/x-dylan', 'tag': 'x-dylan'},
+    {'key': 'text/x-dart', 'tag': 'x-dart'},
+    {'key': 'text/x-sh', 'tag': 'x-sh'},
+    {'key': 'text/x-asterisk', 'tag': 'x-asterisk'},
+    {'key': 'text/x-systemverilog', 'tag': 'x-systemverilog'},
+    {'key': 'text/x-mumps', 'tag': 'x-mumps'},
+    {'key': 'script/x-vue', 'tag': 'x-vue'},
+    {'key': 'text/velocity', 'tag': 'velocity'},
+    {'key': 'text/turtle', 'tag': 'turtle'},
+    {'key': 'text/x-ruby', 'tag': 'x-ruby'},
+    {'key': 'text/x-ttcn-asn', 'tag': 'x-ttcn-asn'},
+    {'key': 'application/x-shockwave-flash', 'tag': 'x-shockwave-flash'},
+    {'key': 'text/x-solr', 'tag': 'x-solr'},
+    {'key': 'text/css', 'tag': 'css'},
+    {'key': 'text/x-pascal', 'tag': 'x-pascal'},
+    {'key': 'application/x-ejs', 'tag': 'x-ejs'},
+    {'key': 'text/x-nesc', 'tag': 'x-nesc'},
+    {'key': 'text/x-ocaml', 'tag': 'x-ocaml'},
+    {'key': 'text/x-hxml', 'tag': 'x-hxml'},
+    {'key': 'text/x-swift', 'tag': 'x-swift'},
+    {'key': 'application/xml-dtd', 'tag': 'xml-dtd'},
+    {'key': 'text/tiki', 'tag': 'tiki'},
+    {'key': 'text/uri-list', 'tag': 'uri-list'},
+    {'key': 'text/x-vb', 'tag': 'x-vb'},
+    {'key': 'text/x-slim', 'tag': 'x-slim'},
+    {'key': 'application/ecmascript', 'tag': 'ecmascript'},
+    {'key': 'text/x-ceylon', 'tag': 'x-ceylon'},
+    {'key': 'text/x-nsis', 'tag': 'x-nsis'},
+    {'key': 'text/x-objectivec++', 'tag': 'x-objectivec++'},
+    {'key': 'text/x-cython', 'tag': 'x-cython'},
+    {'key': 'application/sieve', 'tag': 'sieve'},
+    {'key': 'x-shader/x-vertex', 'tag': 'x-vertex'},
+    {'key': 'text/x-c', 'tag': 'x-c'},
+    {'key': 'text/x-crystal', 'tag': 'x-crystal'},
+    {'key': 'text/x-ebnf', 'tag': 'x-ebnf'},
+    {'key': 'text/x-q', 'tag': 'x-q'},
+    {'key': 'application/n-quads', 'tag': 'n-quads'},
+    {'key': 'text/x-msgenny', 'tag': 'x-msgenny'},
+    {'key': 'application/pgp-signature', 'tag': 'pgp-signature'},
+    {'key': 'text/x-scala', 'tag': 'x-scala'},
+    {'key': 'application/vnd.coffeescript', 'tag': 'vnd.coffeescript'},
+    {'key': 'video/webm', 'tag': 'webm'},
+    {'key': 'text/ecmascript-d+$', 'tag': 'ecmascript-d+$'},
+    {'key': 'text/x-sass', 'tag': 'x-sass'},
+    {'key': 'text/x-handlebars-template', 'tag': 'x-handlebars-template'},
+    {'key': 'text/x-scheme', 'tag': 'x-scheme'},
+    {'key': 'text/x-yaml', 'tag': 'x-yaml'},
+    {'key': 'text/x-mssql', 'tag': 'x-mssql'},
+    {'key': 'text/x-tcl', 'tag': 'x-tcl'},
+    {'key': 'application/pgp-keys', 'tag': 'pgp-keys'},
+    {'key': 'application/x-sh', 'tag': 'x-sh'},
+    {'key': 'application/typescript', 'tag': 'typescript'},
+    {'key': 'text/x-rsrc', 'tag': 'x-rsrc'},
+    {'key': 'text/x-ttcn', 'tag': 'x-ttcn'},
+    {'key': 'text/x-mathematica', 'tag': 'x-mathematica'},
+    {'key': 'text/rtf', 'tag': 'rtf'},
+    {'key': 'text/x-mysql', 'tag': 'x-mysql'},
+    {'key': 'text/x-clojurescript', 'tag': 'x-clojurescript'},
+    {'key': 'text/x-stsrc', 'tag': 'x-stsrc'},
+    {'key': 'text/n-triples', 'tag': 'n-triples'},
+    {'key': 'text/x-haskell', 'tag': 'x-haskell'},
+    {'key': 'text/x-less', 'tag': 'x-less'},
+    {'key': 'text/ecmascript', 'tag': 'ecmascript'},
+    {'key': 'text/x-mscgen', 'tag': 'x-mscgen'},
+    {'key': 'auth/register', 'tag': 'register'},
+    {'key': 'text/x-toml', 'tag': 'x-toml'},
+    {'key': 'text/x-styl', 'tag': 'x-styl'},
+    {'key': 'application/x-httpd-php-open', 'tag': 'x-httpd-php-open'},
+    {'key': 'text/x-tornado', 'tag': 'x-tornado'},
+    {'key': 'audio/mpeg', 'tag': 'mpeg'},
+    {'key': 'text/x-soy', 'tag': 'x-soy'},
+    {'key': 'text/x-factor', 'tag': 'x-factor'},
+    {'key': 'text/x-common-lisp', 'tag': 'x-common-lisp'},
+    {'key': 'text/x-c++src', 'tag': 'x-c++src'},
+    {'key': 'text/x-plsql', 'tag': 'x-plsql'},
     # {"key":"html","tag":"html"},
 ]
+contentTypeListPure=[x['key'] for x in contentTypeList]#用于过滤url
 #敏感信息指纹库
 # 输出敏感信息匹配内容
 sensitiveInfoRegex=[#todo 待完善
@@ -105,7 +309,7 @@ sensitiveInfoRegex=[#todo 待完善
     # {"tag":"miniopass","desc":"minio账号密码(minioadmin)","regex":r'minioadmin/minioadmin|=minioadmin|= minioadmin'},
     {"tag":"miniopass","desc":"minio账号密码(minioadmin)","regex":r'(minioadmin/minioadmin)|(=\s?\'?"?minioadmin)'},
     {"tag":"MAC Address","desc":"MAC地址","regex":r'(^([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5})|[^a-zA-Z0-9]([a-fA-F0-9]{2}(:[a-fA-F0-9]{2}){5}))'},
-    {"tag":"username","desc":"username","regex":r'["\']?((u|U)sername|USERNAME)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?username[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
+    {"tag":"username","desc":"username","regex":r'["\']?((u|U)ser(n|N)ame|USERNAME)["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?|["\']?[\w_-]*?username[\w_-]*?["\']?[^\S\r\n]*[=:][^\S\r\n]*["\']?[\w-]+["\']?'},
 ]
 #todo 扩充参数缺失关键字库
 missingRegex=[
@@ -121,6 +325,7 @@ missingRegex=[
             {"regex":r'参数缺失',"tag":"missing","desc":"参数缺失"},
             {"regex":r'参数异常',"tag":"missing","desc":"参数异常"},
             {"regex":r'参数错误',"tag":"missing","desc":"参数错误"},
+            {"regex":r'参数不完整',"tag":"missing","desc":"参数不完整"},
             {"regex":r'非法的?参数',"tag":"missing","desc":"非法参数"},
         ]
 #todo 扩充完善指纹库
@@ -229,6 +434,8 @@ bypassInsertIntoList=[#内部插入tech库
 #爬取实现
 resultJs=[]
 resultUrl=[]
+resultJsWithCountForDebug=[]
+resultUrlWithCountForDebug=[]
 endUrl=[]
 ua="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 domainblacklist=[
@@ -247,8 +454,8 @@ jsmapRegex=r'//#\ssourceMappingURL\s?=\s?\'?"?([^\<\>]*?\.js\.map\s?$)'
 bodyBucket=[]#存储响应body 我要滥用全局变量，真爽
 outputSuccess=True#用于批处理中判断单任务输出是否成功
 modewrited=False
-
-
+inputUrl=""#存储输入的目标URL
+apiRootBlackListDuringSpider=[x for x in apiRootBlackList if x!="#"]#过滤爬取中 api根
 def outputToFile(contentlist,filename):
     #输出结果到当前目录
     global outputSuccess
@@ -500,6 +707,18 @@ def debugger(info,name=""):
             print(f"debugger: {name}: {info}")
         else:
             print(f"debugger: {info}")
+#debug信息输出
+def delinebugger(info,name=""):
+    if DEBUG:
+        print()
+        if name:
+            print(f"debugger: {name}: 总数: {len(info)}")
+            for line in info:
+                print(line)
+        else:
+            print(f"debugger: 总数: {len(info)}")
+            for line in info:
+                print(line)
 
 def writeLinesIntoFile(lines,filename):
     with open(filename,'w',encoding='utf-8') as f:
@@ -754,13 +973,19 @@ def somehowreplaceUrlfinder(url):
     global resultUrl
     global resultJs
     global endUrl
+    global inputUrl
     mySpider=jsSpider()
+    inputUrl=url
     mySpider.Spider(url)#def Spider(self,url,isdeep=True):
     resultUrl = mySpider.RemoveRepeatElement(resultUrl)
     if resultUrl and url.strip("/")+"/" not in resultUrl:
         mySpider.appendUrl(url)
     lst=resultUrl.copy()
     lst=urlExcludeJs(lst,url)
+    # delinebugger(resultUrlWithCountForDebug,"resultUrl")
+    # if DEBUG:
+    #     writeLinesIntoFile([x['url'] for x in resultUrlWithCountForDebug],".js_raw_spider_count.txt")
+    #     print(f"url爬取完毕，原始结果输出到 .js_raw_spider_count.txt, url总数: {len(resultUrlWithCountForDebug)}")
     resultUrl=[]
     resultJs = []
     endUrl=[]
@@ -1169,7 +1394,7 @@ def getParseJsFromUrl(origionUrl):
     projectJson["url"]=origionUrl
     if DEBUG:
         print(f"初始url为: {origionUrl}")
-        print()
+    print()
     # urlList=getJsWithoutPaperWork(origionUrl)
     # urls=[]
     # urlList=[]
@@ -1187,8 +1412,13 @@ def getParseJsFromUrl(origionUrl):
     #     # urlList+=getJsWithoutPaperWork(cleanurl)
     #     urlList+=getJsWithoutPaperWorkUsingJSFinder(cleanurl)
     urlList=list(set(urlList))
+    progress=CLI()
+    progress.in_line("")
     if DEBUG:
-        print(f"爬取发包次数: {len(countspider)} 次")
+        # print(f"爬取发包次数: {len(countspider)} 次")
+        progress.new_line(f"爬取结束: 爬取发包次数: {len(countspider)} 次")
+    else:
+        progress.new_line("爬取结束")
     if urlList:
         # if not projectJson["url"]:
         apis=getApiFromUrlList(origionUrl,urlList)
@@ -1408,7 +1638,9 @@ def singleUserInputApi(mode,origionUrl,apiPaths):
             print(f"用户禁用移除危险接口")
             urlList=removeLogoutApi(urlList)
         #获取接口
-        apiList=getApiFromUrlList(origionUrl,urlList)
+        # apiList=getApiFromUrlList(origionUrl,urlList)
+        filename=".js.txt"
+        apiList=urlToInterface(origionUrl,urlList,filename)
         anchorRespList=myFuzz.getAnchorResponse(mode,origionUrl)
         # 取消手动输入api情况下的对比 不取消
         #todo 或者留下锚点，但是依然输出
@@ -1513,15 +1745,105 @@ def jsonRespOutput(body):
     else:
         return
 
+
+#progress display from dirsearch project https://github.com/maurosoria/dirsearch
+#判断平台
+IS_WINDOWS = sys.platform in ("win32", "msys")
+# 定义Windows API函数和数据类型
+STD_OUTPUT_HANDLE = -11
+class COORD(ctypes.Structure):
+    _fields_ = [("X", ctypes.c_short), ("Y", ctypes.c_short)]
+class SMALL_RECT(ctypes.Structure):
+    _fields_ = [("Left", ctypes.c_short), ("Top", ctypes.c_short),
+                ("Right", ctypes.c_short), ("Bottom", ctypes.c_short)]
+class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+    _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD),
+                ("wAttributes", ctypes.c_ushort), ("srWindow", SMALL_RECT),
+                ("dwMaximumWindowSize", COORD)]
+
+class CLI:
+    def __init__(self):
+        self.last_in_line = False
+        # self.buffer = ""
+
+        # if not options["color"]:
+        #     disable_color()
+    @staticmethod
+    def erase():
+        if IS_WINDOWS:
+            kernel32 = ctypes.windll.kernel32
+            _GetStdHandle = kernel32.GetStdHandle
+            _GetConsoleScreenBufferInfo = kernel32.GetConsoleScreenBufferInfo
+            _FillConsoleOutputCharacterA = kernel32.FillConsoleOutputCharacterA
+            if ctypes.windll.kernel32.GetConsoleScreenBufferInfo(ctypes.windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE), ctypes.byref(CONSOLE_SCREEN_BUFFER_INFO())):
+                # 获取当前光标位置和屏幕尺寸
+                csbi = CONSOLE_SCREEN_BUFFER_INFO()
+                _GetConsoleScreenBufferInfo(_GetStdHandle(STD_OUTPUT_HANDLE), ctypes.byref(csbi))
+                width = csbi.dwCursorPosition.X
+                height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1
+
+                # 填充空格字符并移动光标到行首
+                char = ctypes.c_char(b' ')
+                written = ctypes.c_ulong(0)
+                for i in range(height):
+                    _FillConsoleOutputCharacterA(_GetStdHandle(STD_OUTPUT_HANDLE), char, width, COORD(0, csbi.dwCursorPosition.Y+i), ctypes.byref(written))
+
+                # 移动光标到行首
+                pos = COORD(0, csbi.dwCursorPosition.Y)
+                ctypes.windll.kernel32.SetConsoleCursorPosition(_GetStdHandle(STD_OUTPUT_HANDLE), pos)
+
+        else:
+            sys.stdout.write("\033[1K")
+            sys.stdout.write("\033[0G")
+
+    # @locked
+    def in_line(self, string):
+        self.erase()
+        sys.stdout.write(string)
+        sys.stdout.flush()
+        self.last_in_line = True
+
+    # @locked
+    def new_line(self, string="", do_save=True):
+        if self.last_in_line:
+            self.erase()
+
+        if IS_WINDOWS:
+            sys.stdout.write(string)
+            sys.stdout.flush()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+        else:
+            sys.stdout.write(string + "\n")
+
+        sys.stdout.flush()
+        self.last_in_line = False
+        sys.stdout.flush()
+
 #js爬取实现
 #爬取功能来自大佬项目https://github.com/pingc0y/URLFinder，用python进行了实现
 class jsSpider():
     #todo 实施多线程爬取
-    def Spider(self,url,isdeep=True):
+    # def Spider(self,url,isdeep=True):
+    def Spider(self,url,depth=1):#*默认深度上限2，同源深度上限URL 3, JS 5
         requests.packages.urllib3.disable_warnings()
         url =urllib.parse.unquote(url)
+        if url.lower() in ["https:","http:","https://","http://",]:
+            return
         if self.getEndUrl(url):
             return
+        # debugger(url,"url")
+        progress=CLI()
+        if DEBUG:
+            progress.in_line(f"发包次数: {len(countspider)+1} 结果: {len(resultUrl)} 深度: {depth} 爬取中: {url}")
+            # sys.stdout.write(f"\r发包次数: {len(countspider)+1} 深度: {depth} 爬取中: {url}")
+            # sys.stdout.flush()
+        else:
+            # progress.in_line(f"发包次数: {len(countspider)+1} 爬取中: {url}")
+            #! 长度超出屏幕时会被强制换行，导致屏幕擦除失效，这里不再显示爬取URL
+            # progress.in_line(f"发包次数: {len(countspider)+1}")
+            progress.in_line(f"发包次数: {len(countspider)+1} 结果: {len(resultUrl)}")
         self.appendEndUrl(url)
         headers={
             "User-Agent": ua,
@@ -1532,42 +1854,32 @@ class jsSpider():
         if cookieConf:
             headers.update({"Cookie":cookieConf})
         try:
-            # resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
             if proxyConf:
                 resp=requests.get(url,headers=headers,proxies=proxyConf,timeout=(5,10), verify=False)
             else:
                 resp=requests.get(url,headers=headers,timeout=(5,10), verify=False)
             #*定位js.map
             if url.endswith(".js"):
-                # cleanurl=getCleanUrl(url)
-                # if "sourceMappingURL" in resp.text and ".js.map" in resp.text:
-                #     self.appendJsMap(url+".map")
                 matches=re.findall(jsmapRegex,resp.text[-100:])
                 if matches:
-                    # self.appendJsMap(cleanurl+"/"+matches[0])
                     self.appendJsMap(url+".map")
         except requests.exceptions.Timeout as e:
-            print(f"TIMEOUT: {url}")
+            # print(f"TIMEOUT: {url}")
             return
         except requests.exceptions.ConnectionError as e:
-            try:
-                if "Connection reset by peer" in e:
-                    print(f"Connection reset: {url}")
-                    # raise ValueError(f"Connection reset: {url}")
-                else:
-                    print(f"Connection error occurred: {url}")
-                    # raise ValueError(f"Connection error occurred: {url}")
-            except:
-                print(f"Connection error occurred: {url}")
-                # raise ValueError(f"Connection error occurred: {url}")
+            # try:
+            #     if "Connection reset by peer" in e:
+            #         print(f"Connection reset: {url}")
+            #     else:
+            #         print(f"Connection error occurred: {url}")
+            # except:
+            #     print(f"Connection error occurred: {url}")
             return
         except requests.exceptions.RequestException as e:
-            print(f"其他连接错误: {url}")
-            # raise ValueError(f"其他连接错误: {url}")
+            # print(f"其他连接错误: {url}")
             return
         except Exception as e:
-            print(f"请求出错, {e}")
-            # raise ValueError(f"请求出错, {e}")
+            # print(f"请求出错, {e}")
             return
         respurl = resp.request.url
         parsed_url=urlparse(respurl)
@@ -1579,12 +1891,15 @@ class jsSpider():
         scheme = parsed_url.scheme
         #提取js
         countspider.append(1)
-        self.jsFind(resp.text, host, scheme, path,isdeep)
+        # self.jsFind(resp.text, host, scheme, path,isdeep)
+        self.jsFind(resp.text, host, scheme, path,depth)
         #提取url
-        self.urlFind(resp.text, host, scheme, path,isdeep)
+        # self.urlFind(resp.text, host, scheme, path,isdeep)
+        self.urlFind(resp.text, host, scheme, path,depth)
         return
 
-    def jsFind(self,res,host,scheme,path,isdeep=False):
+    # def jsFind(self,res,host,scheme,path,isdeep=False):
+    def jsFind(self,res,host,scheme,path,depth):
         rootregex=re.compile(r'/.*/{1}|/')
         rootresult=rootregex.findall(path)
         if rootresult:
@@ -1616,28 +1931,103 @@ class jsSpider():
             jss=["".join(x) for x in jss]#元组已处理
             jss = self.jsFilter(jss)
             jss=[x.rstrip("\\") if x.endswith("\\") else x for x in jss]
-            for js in jss:
-                if js=="":
-                    continue
-                if js.startswith("https:") or js.startswith("http:"):
-                    self.appendJs(js)
-                    #处理js正则命中域名中http://xxx.jsxxx.com的情况
-                    if len(js.strip(".").split("."))>=3:
-                        if isdeep:
-                            self.Spider(js,False)
-                elif js.startswith("//"):
-                    self.appendJs(scheme+":"+js)
-                    if isdeep:
-                        self.Spider(scheme+":"+js,False)
-                elif js.startswith("/"):
-                    self.appendJs(host+js)
-                    if isdeep:
-                        self.Spider(host+js,False)
-                else:
-                    self.appendJs(host+root+js)
-                    if isdeep:
-                        self.Spider(host+root+js,False)
-    def urlFind(self,res,host,scheme,path,isdeep=False):
+            # for js in jss:
+            #     if js=="":
+            #         continue
+            #     if js.startswith("https:") or js.startswith("http:"):
+            #         self.appendJs(js)
+            #         #处理js正则命中域名中http://xxx.jsxxx.com的情况
+            #         if len(js.strip(".").split("."))>=3:
+            #             if isdeep:
+            #                 self.Spider(js,False)
+            #     elif js.startswith("//"):
+            #         self.appendJs(scheme+":"+js)
+            #         if isdeep:
+            #             self.Spider(scheme+":"+js,False)
+            #     elif js.startswith("/"):
+            #         self.appendJs(host+js)
+            #         if isdeep:
+            #             self.Spider(host+js,False)
+            #     else:
+            #         self.appendJs(host+root+js)
+            #         if isdeep:
+            #             self.Spider(host+root+js,False)
+            if deepConf:
+                for js in jss:
+                    if js=="":
+                        continue
+                    #*默认深度上限2，同源深度上限URL 3, JS 5
+                    if js.startswith("https:") or js.startswith("http:"):
+                        self.appendJs(js)
+                        #处理js正则命中域名中http://xxx.jsxxx.com的情况
+                        if len(js.strip(".").split("."))>=3:
+                            # if isdeep or self.isSameOrigin(js):
+                            #     self.Spider(js,False)
+                            if depth<3:
+                                self.Spider(js,depth+1)
+                            elif self.isSameOrigin(js) and depth <5:
+                                self.showSameOrigin(js)
+                                self.Spider(js,depth+1)
+                    elif js.startswith("//"):
+                        self.appendJs(scheme+":"+js)
+                        # if isdeep or self.isSameOrigin(scheme+":"+js):
+                        #     self.Spider(scheme+":"+js,False)
+                        if depth<3:
+                            self.Spider(scheme+":"+js,depth+1)
+                        elif self.isSameOrigin(scheme+":"+js) and depth <5:
+                            self.showSameOrigin(scheme+":"+js)
+                            self.Spider(scheme+":"+js,depth+1)
+                    elif js.startswith("/"):
+                        self.appendJs(host+js)
+                        # if isdeep or self.isSameOrigin(host+js):
+                        #     self.Spider(host+js,False)
+                        if depth<3:
+                            self.Spider(host+js,depth+1)
+                        elif self.isSameOrigin(host+js) and depth <5:
+                            self.showSameOrigin(host+js)
+                            self.Spider(host+js,depth+1)
+                    else:
+                        self.appendJs(host+root+js)
+                        # if isdeep or self.isSameOrigin(host+root+js):
+                        #     self.Spider(host+root+js,False)
+                        if depth<3:
+                            self.Spider(host+root+js,depth+1)
+                        elif self.isSameOrigin(host+root+js) and depth <5:
+                            self.showSameOrigin(host+root+js)
+                            self.Spider(host+root+js,depth+1)
+            else:
+                for js in jss:
+                    if js=="":
+                        continue
+                    #*默认深度上限2，同源深度上限URL 3, JS 5
+                    if js.startswith("https:") or js.startswith("http:"):
+                        self.appendJs(js)
+                        #处理js正则命中域名中http://xxx.jsxxx.com的情况
+                        if len(js.strip(".").split("."))>=3:
+                            # if isdeep or self.isSameOrigin(js):
+                            #     self.Spider(js,False)
+                            if depth<2:
+                                self.Spider(js,depth+1)
+                    elif js.startswith("//"):
+                        self.appendJs(scheme+":"+js)
+                        # if isdeep or self.isSameOrigin(scheme+":"+js):
+                        #     self.Spider(scheme+":"+js,False)
+                        if depth<2:
+                            self.Spider(scheme+":"+js,depth+1)
+                    elif js.startswith("/"):
+                        self.appendJs(host+js)
+                        # if isdeep or self.isSameOrigin(host+js):
+                        #     self.Spider(host+js,False)
+                        if depth<2:
+                            self.Spider(host+js,depth+1)
+                    else:
+                        self.appendJs(host+root+js)
+                        # if isdeep or self.isSameOrigin(host+root+js):
+                        #     self.Spider(host+root+js,False)
+                        if depth<2:
+                            self.Spider(host+root+js,depth+1)
+    # def urlFind(self,res,host,scheme,path,isdeep=False):
+    def urlFind(self,res,host,scheme,path,depth):
         root=""
         rootregex=re.compile(r'/.*/{1}|/')
         roots=rootregex.findall(path)
@@ -1662,39 +2052,163 @@ class jsSpider():
                 path="/"+urlparse(root).path.strip("/")
                 if path and path not in configdomainurlroot:
                     configdomainurlroot.append(path)
+        # urlregexs=[
+        #     r'["\']http[^\s\'’"\>\<\)\(]{2,250}?[\"\']',
+        #     r'=http[^\s\'’"\>\<\)\(]{2,250}',
+        #     r'[\"\']/[^\s\'’"\>\<\:\)\(]{2,250}?["\']',
+        #     # r'[\"\'][^\s\'’"\>\<\:\)\(]{2,250}?/[^\s\'’"\>\<\:\)\(]{2,250}?["\']',
+        #     r'(href|action).{0,3}=.{0,3}[\"\'][^\s\'’"\>\<\)\(]{2,250}',
+        #     r'(href|action).{0,3}=.{0,3}[^\s\'’"\>\<\)\(]{2,250}',
+        # ]
         urlregexs=[
             r'["\']http[^\s\'’"\>\<\)\(]{2,250}?[\"\']',
             r'=http[^\s\'’"\>\<\)\(]{2,250}',
-            r'[\"\']/[^\s\'’"\>\<\:\)\(]{2,250}?["\']',
+            # r'[\"\']/[^\s\'’"\>\<\:\)\(]{2,250}?["\']',
+            r'[\"\']/[^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            # "a/b/c"
+            # r'[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?/[^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?/[^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            #排除汉字
+            r'[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?/[^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?/[^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            #! 下面这个正则开启必须进行严格限制，否则误报非常多 暂不启用
+            # "a/a"
+            # r'[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?/[^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # path url := "a"
+            #todo 这里没有在下方url处理时适配 path url := "a" 的情况
+            #todo 如果适配则会存在非常多的误报
+            #todo 这里需要完全修改匹配模式，给匹配结果打tag，才能准确匹配
+            # r'(?i)(?<=path:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=path\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=path=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=path\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=url:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=url\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=url=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=url\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=index:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=index\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=index=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(?i)(?<=index\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(]{1,250}?["\']',
+            # r'(href|action).{0,3}=.{0,3}[\"\'][^\s\'’"\>\<\)\(]{2,250}',
+            # r'(href|action).{0,3}=.{0,3}[^\s\'’"\>\<\)\(]{2,250}',
+            #排除汉字
+            r'(?i)(?<=path:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=path\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=path=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=path\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=url:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=url\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=url=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=url\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=index:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=index\s:)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=index=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
+            r'(?i)(?<=index\s=)\s?[\"\'][^\s\'’"\>\<\:\)\(\u4e00-\u9fa5]{1,250}?["\']',
             r'(href|action).{0,3}=.{0,3}[\"\'][^\s\'’"\>\<\)\(]{2,250}',
             r'(href|action).{0,3}=.{0,3}[^\s\'’"\>\<\)\(]{2,250}',
         ]
 
+        # for urlregex in urlregexs:
+        #     pattern=re.compile(urlregex)
+        #     urls=pattern.findall(res)
+        #     urls=["".join(x) for x in urls]#元组已处理
+        #     urls=self.urlFilter(urls)
+        #     urls=[x.rstrip("\\") if x.endswith("\\") else x for x in urls]
+        #     for url in urls:
+        #         if url=="":
+        #             continue
+        #         if url.startswith("https:") or url.startswith("http:"):
+        #             self.appendUrl(url)
+        #             if isdeep:
+        #                 self.Spider(url,False)
+        #         elif url.startswith("//"):
+        #             self.appendUrl(scheme+":"+url)
+        #             if isdeep:
+        #                 self.Spider(scheme+":"+url,False)
+        #         elif url.startswith("/"):
+        #             self.appendUrl(host+url)
+        #             if isdeep:
+        #                 self.Spider(host+url,False)
+        #         elif url.endswith(".js"):
+        #             self.appendUrl(host+root+url)
+        #             if isdeep:
+        #                 self.Spider(host+root+url,False)
         for urlregex in urlregexs:
             pattern=re.compile(urlregex)
             urls=pattern.findall(res)
             urls=["".join(x) for x in urls]#元组已处理
+            # delinebugger(urls,"urls过滤前1111")
             urls=self.urlFilter(urls)
             urls=[x.rstrip("\\") if x.endswith("\\") else x for x in urls]
-            for url in urls:
-                if url=="":
-                    continue
-                if url.startswith("https:") or url.startswith("http:"):
-                    self.appendUrl(url)
-                    if isdeep:
-                        self.Spider(url,False)
-                elif url.startswith("//"):
-                    self.appendUrl(scheme+":"+url)
-                    if isdeep:
-                        self.Spider(scheme+":"+url,False)
-                elif url.startswith("/"):
-                    self.appendUrl(host+url)
-                    if isdeep:
-                        self.Spider(host+url,False)
-                elif url.endswith(".js"):
-                    self.appendUrl(host+root+url)
-                    if isdeep:
-                        self.Spider(host+root+url,False)
+            #*默认深度上限2，同源深度上限URL 3, JS 5
+            # delinebugger(urls,"urls过滤后")
+            if deepConf:
+                for url in urls:
+                    if url=="":
+                        continue
+                    if url.startswith("https:") or url.startswith("http:"):
+                        self.appendUrl(url)
+                        if depth<2:
+                            self.Spider(url,depth+1)
+                        elif self.isSameOrigin(url) and depth<3:
+                            self.showSameOrigin(url)
+                            self.Spider(url,depth+1)
+                    elif url.startswith("//"):
+                        self.appendUrl(scheme+":"+url)
+                        if depth<2:
+                            self.Spider(scheme+":"+url,depth+1)
+                        elif self.isSameOrigin(scheme+":"+url) and depth<3:
+                            self.showSameOrigin(scheme+":"+url)
+                            self.Spider(scheme+":"+url,depth+1)
+                    elif url.startswith("/"):
+                        self.appendUrl(host+url)
+                        if depth<2:
+                            self.Spider(host+url,depth+1)
+                        elif self.isSameOrigin(host+url) and depth<3:
+                            self.showSameOrigin(host+url)
+                            self.Spider(host+url,depth+1)
+                    elif url.endswith(".js"):
+                        self.appendUrl(host+root+url)
+                        if depth<2:
+                            self.Spider(host+root+url,depth+1)
+                        elif self.isSameOrigin(host+root+url) and depth<3:
+                            self.showSameOrigin(host+root+url)
+                            self.Spider(host+root+url,depth+1)
+                    else:#匹配 a/bc/d 或者 url|path: "ab"
+                        # self.appendUrl(host+root+"/"+url)
+                        self.appendUrl(host+root+url)
+                        if depth<2:
+                            # self.Spider(host+root+"/"+url,depth+1)
+                            self.Spider(host+root+url,depth+1)
+                        elif self.isSameOrigin(host+root+url) and depth<3:
+                            # self.Spider(host+root+"/"+url,depth+1)
+                            self.showSameOrigin(host+root+url)
+                            self.Spider(host+root+url,depth+1)
+            else:
+                for url in urls:
+                    if url=="":
+                        continue
+                    if url.startswith("https:") or url.startswith("http:"):
+                        self.appendUrl(url)
+                        if depth<2:
+                            self.Spider(url,depth+1)
+                    elif url.startswith("//"):
+                        self.appendUrl(scheme+":"+url)
+                        if depth<2:
+                            self.Spider(scheme+":"+url,depth+1)
+                    elif url.startswith("/"):
+                        self.appendUrl(host+url)
+                        if depth<2:
+                            self.Spider(host+url,depth+1)
+                    elif url.endswith(".js"):
+                        self.appendUrl(host+root+url)
+                        if depth<2:
+                            self.Spider(host+root+url,depth+1)
+                    else:#匹配 a/bc/d 或者 url|path: "ab"
+                        # self.appendUrl(host+root+"/"+url)
+                        self.appendUrl(host+root+url)
+                        if depth<2:
+                            # self.Spider(host+root+"/"+url,depth+1)
+                            self.Spider(host+root+url,depth+1)
 
     def jsFilter(self,lst):
         tmp=[]
@@ -1719,6 +2233,10 @@ class jsSpider():
     def urlFilter(self,lst):
         tmp=[]
         for line in lst:
+            if [x for x in contentTypeListPure if x in line]:
+                continue
+            if any(line.strip("\"").strip("'").strip("/").startswith(x) for x in apiRootBlackListDuringSpider):
+                continue
             line = line.replace(" ", "")
             line = line.replace("\\/", "/")
             line = line.replace("\"", "")
@@ -1735,12 +2253,13 @@ class jsSpider():
                 line=line.replace("=","",1)
             if line.startswith("href="):
                 line=line.replace("href=","",1)
-            for x in urlblacklist:
-                if x in line:
+            for x in urlblacklist:#
+                if x in line:#排除 aa.vue?a=1&b=3的情况
                     line=""
                     break
             for x in urlextblacklist:
-                if line.endswith(x):
+                # if line.endswith(x):
+                if line.split("?")[0].endswith(x):#排除 aa.vue?a=1&b=3的情况
                     line=""
                     break
             tmp.append(line)
@@ -1763,12 +2282,16 @@ class jsSpider():
         if url in resultUrl:
             return
         resultUrl.append(url)
+        if DEBUG:
+            resultUrlWithCountForDebug.append({"url":url,"countspider":len(countspider)})
     def appendJs(self,js):
         # for x in resultJs:
         #     if x==js:
         if js in resultJs:
             return
         resultJs.append(js)
+        if DEBUG:
+            resultJsWithCountForDebug.append({"url":js,"countspider":len(countspider)})
     def RemoveRepeatElement(self,lst):
         mydicc={}
         tmp=[]
@@ -1788,7 +2311,31 @@ class jsSpider():
         if js in jsMapList:
             return
         jsMapList.append(js)
-
+    def isSameOrigin(self,url):
+        # if getCleanUrl(url)==getCleanUrl(inputUrl):
+        #* 放开同源策略中scheme的限制
+        try:
+            if getCleanUrl(url).replace("http","").replace("https","")==getCleanUrl(inputUrl).replace("http","").replace("https",""):
+                # if DEBUG:
+                #     if url.lower() in ["https:","http:","https://","http://",]:
+                #         pass
+                #     elif self.getEndUrl(url):
+                #         pass
+                #     else:
+                #         print(f"同源继续爬取: {url}")
+                return True
+            else:
+                return False
+        except:
+            return False
+    def showSameOrigin(self,url):
+        if DEBUG and Verbose:
+            if url.lower() in ["https:","http:","https://","http://",]:
+                pass
+            elif self.getEndUrl(url):
+                pass
+            else:
+                print(f"同源继续爬取: {url}")
 
 class apiFuzz:
     #todo 建立项目文件，每个目标生成不同结果文件？低优先级
@@ -2267,8 +2814,9 @@ class apiFuzz:
                             print(f"fuzz:有效根过多，判断根为 /")
                         # singlestatus["apiFigureout"]["validApis"]=validApis
                         apis=["/"]
-                        print()
-                        print(f"api总计 {len(apis)} 个: {apis}")
+                        if DEBUG:
+                            print()
+                            print(f"api总计 {len(apis)} 个: {apis}")
                         print()
                         fullUrlList=self.fastUniqList([x["url"] for x in directApiListWithTag])
                     else:
@@ -2284,22 +2832,26 @@ class apiFuzz:
                         #合并所有api
                         apis=apis+commonPrefixs+stairs
                         apis=sorted(self.fastUniqList(apis))
-                        print()
-                        print(f"api总计 {len(apis)} 个: {apis}")
-                        print()
+                        if DEBUG:
+                            print()
+                            print(f"api总计 {len(apis)} 个: {apis}")
+                        # print()
 
                         fullListFromTags=[x for x in fuzzingUrlList if x["tag"] in tags]
                         if DEBUG:
+                            print()
                             print(f"tag命中url: {len(fullListFromTags)} 个")
                         #* 目前没有使用api定位tag，tag定位url的形式，直接从api定位url
                         #[{"url":url,"tag":"completeApi","api":api}]
                         fullListFromPath=[x for x in fuzzingUrlList if any(x["api"].startswith(api) for api in apis)]
                         if DEBUG:
+                            print()
                             print(f"api命中url: {len(fullListFromPath)} 个")
                         fullListFromTagAndPath=fullListFromTags+fullListFromPath
                         #
                         fullUrlList=self.fastUniqList([x["url"] for x in fullListFromTagAndPath])
 
+                    print()
                     print(f"根据api tags进行fuzz, 总数量: {len(fullUrlList)} 个")
                     if DEBUG and Verbose:
                         for line in fullUrlList:
@@ -3780,7 +4332,11 @@ class apiFuzz:
             else:
                 print(f"用户禁用移除危险接口")
                 removeLogoutApi(urlList)
-            apiList=getApiFromUrlList(origionUrl,urlList)
+            # apiList=getApiFromUrlList(origionUrl,urlList)
+            #获取接口
+            # apiList=getApiFromUrlList(origionUrl,urlList)
+            filename=".js.txt"
+            apiList=urlToInterface(origionUrl,urlList,filename)
             # myFuzz=apiFuzz()
             singlestatus=myFuzz.apiFuzzInAction(mode,origionUrl,apiList,noneApis)
             fuzzApiResult["info"]=singlestatus
@@ -6068,6 +6624,7 @@ cookieConf={}
 headersConf={}
 threadsConf=0
 modeConf=""#mode字符串
+deepConf=False#增加爬取深度，#*默认深度上限2，deep模式上线 URL 2 JS 3, 同源深度上限URL 3, JS 5
 isBypassOn=False
 isDangerRemove=True
 argsnotcompatiblewithspider=["nobody","nofuzz","bypass","noapi"]
@@ -6095,7 +6652,7 @@ projectJson={#不输出响应body信息
 
 class ErrorClass:
     # usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [thread]\n\nurl|file:目标url\nfuzz:自动fuzz接口\napi:用户指定api根路径  fuzz|api eg. api=/jeecg-boot\nnoapi:排除输入的指定api eg. noapi=/system,/worker,/api\nnobody: 禁用输出响应body   nobody|nofuzz\nnofuzz: 仅获取有效api，无后续响应获取\ncookie: 设置cookie（爬取阶段和响应获取阶段）eg. cookie='username=admin'\nheader: 设置header（爬取阶段和响应获取阶段）eg. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger: 解除危险接口限制\nbypass: 对500 401 403 进行bypass测试（bypass模式响应获取阶段会忽略cookie和header）\nthread: 线程数（爬取阶段和响应获取阶段）eg. thread=200\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"
-    usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush]\n\nurl|file: 目标url\nfuzz:     自动fuzz接口\napi:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot\nnoapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api\nnobody:   禁用输出响应body   nobody|nofuzz\nnofuzz:   仅获取有效api，无后续响应获取\ncookie:   设置cookie        e.g. cookie='username=admin'\nheader:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger:   解除危险接口限制\nbypass:   对500 401 403 进行bypass测试\noutput:   输出到文件 (txt)  e.g. output='dest.txt'\nthread:   线程数     e.g. thread=200\nproxy:    设置代理 (仅指定proxy时，自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'\nflush:    清除项目历史记录，重新爬取\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"+versionConf
+    usageTips="错误！！！使用方式：python3 jjjjjjjs.py url|urlfile [fuzz|api] [noapi] [nobody|nofuzz] [cookie] [header] [danger] [bypass] [output] [thread] [proxy] [flush] [deep]\n\nurl|file: 目标url\nfuzz:     自动fuzz接口\napi:      用户指定api根路径  fuzz|api        e.g. api=/jeecg-boot\nnoapi:    排除输入的指定api        e.g. noapi=/system,/worker,/api\nnobody:   禁用输出响应body   nobody|nofuzz\nnofuzz:   仅获取有效api，无后续响应获取\ncookie:   设置cookie        e.g. cookie='username=admin'\nheader:   设置header        e.g. header='X-Forwarded-For: localhost\\nX-Access-Token: eyJxxxxx'\ndanger:   解除危险接口限制\nbypass:   对500 401 403 进行bypass测试\noutput:   输出到文件 (txt)  e.g. output='dest.txt'\nthread:   线程数     e.g. thread=200\nproxy:    设置代理 (仅指定proxy时, 自动设置代理到http://127.0.0.1:8080) e.g. proxy='http://127.0.0.1:8080'\nflush:    清除项目历史记录, 重新爬取\ndeep:     深度模式(一般不需要开启), 开启后爬取深度上限:URL 2层 JS 3层,同源URL 3层, 同源JS 5层\ndebug:    展示更多信息\n\n目标参数的位置固定在参数第一位，其他参数不限制出现位置\n\n更多示例, 请查看 https://github.com/ttstormxx/jjjjjjjjjjjjjs ,欢迎star ^_^"+versionConf
     urlnotvalid="错误！！！输入的URL或文件无效"
     modenotcompatible="错误！！！fuzz模式和api模式仅能选一个"
     apinoapinotcompatible="错误！！！api模式不能使用noapi选项"
@@ -6114,7 +6671,7 @@ class ErrorClass:
         return _
 
 #有效选项
-defaultParams=["fuzz","api","noapi","nobody","nofuzz","cookie","header","danger","rage","bypass","output","thread","proxy","flush"]
+defaultParams=["fuzz","api","noapi","nobody","nofuzz","cookie","header","danger","rage","bypass","output","thread","proxy","deep","flush"]
 def doNotRepeatOptions(args):
     # defaultParams=["fuzz","api","noapi","nobody","nofuzz","cookie","header","danger","rage","bypass","output","thread","proxy","flush"]
     cleanargs=[x for x in args if x.split("=")[0].lower() in defaultParams]
@@ -6301,6 +6858,7 @@ def modeParserImplement2(args=None):
     global outputConf
     global DEBUG
     global flushConf
+    global deepConf
     parseResult={"mode":"","batch":False,"apis":[],"noapis":[],"target":"","output":""}
     delimiter="-"
     mode=[]
@@ -6433,6 +6991,9 @@ def modeParserImplement2(args=None):
         elif args[i].lower()=="flush":#重置项目历史记录
             mode.append("flush")
             flushConf=True
+        elif args[i].lower()=="deep":#重置项目历史记录
+            mode.append("deep")
+            deepConf=True
     mode=modeWhisper(mode)
     #cookie header
     try:
