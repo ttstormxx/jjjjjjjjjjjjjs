@@ -32,11 +32,12 @@ jobs:
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: dist/jjjjjjjjjjjjjs
-          asset_name: ${{env.PROJECT_NAME}}_linux_${{matrix.arch}}
+          asset_name: ${{env.PROJECT_NAME}}_linux_${{matrix.arch}}_${{ env.RELEASE_ASSET_NAME }}
           asset_content_type: application/octet-stream
         #   api_key: ${{ secrets.GITHUB_TOKEN }}
         env:
-            PROJECT_NAME: actiontest
+            RELEASE_ASSET_NAME: v2.4.0
+            PROJECT_NAME: jjjjjjjjjjjjjs
             # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
   build-and-deploy-windows:
@@ -66,10 +67,11 @@ jobs:
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: dist/jjjjjjjjjjjjjs.exe
-          asset_name: ${{env.PROJECT_NAME}}_windows_${{matrix.arch}}.exe
+          asset_name: ${{env.PROJECT_NAME}}_windows_${{matrix.arch}}_${{ env.RELEASE_ASSET_NAME }}.exe
           asset_content_type: application/octet-stream
         #   api_key: ${{ secrets.GITHUB_TOKEN }}
         env:
-            PROJECT_NAME: actiontest
+            RELEASE_ASSET_NAME: v2.4.0
+            PROJECT_NAME: jjjjjjjjjjjjjs
             # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
